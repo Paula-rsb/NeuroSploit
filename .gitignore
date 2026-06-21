@@ -91,3 +91,6 @@ logs/webgui.log
 # generated reports
 reports/report.*
 reports/*.pdf
+
+# Rust build artifacts (v3.4.0)
+neurosploit-rs/target/

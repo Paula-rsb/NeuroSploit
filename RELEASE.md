@@ -1,3 +1,49 @@
+# NeuroSploit v3.4.0 — Release Notes
+
+**Release Date:** June 2026
+**Codename:** Rust Multi-Model Harness
+**License:** MIT
+
+---
+
+## TL;DR
+
+A new **Rust harness** (`neurosploit-rs/`) re-implements the autonomous runtime
+as a single, fast binary built on `tokio` + `axum`. It drives a **pool of LLM
+models** with concurrency limits, **provider failover**, and **N-model validator
+voting** — multiple models must independently agree a finding is real before it
+is reported — then serves its own solid web dashboard. It reuses the existing
+`agents_md/` library (213 agents) unchanged.
+
+## Highlights
+
+- **`neurosploit-rs/` cargo workspace**: `harness` lib crate + `neurosploit`
+  binary. `cargo build --release` → one static-ish binary.
+- **Multi-model pool** (`pool.rs`): bounded concurrency + automatic **failover**
+  across providers; the same panel is reused as the **validator voting** jury.
+- **Pipeline** (`pipeline.rs`): recon → parallel agent exploitation (semaphore
+  bounded) → **N-model adversarial vote** → score → report. Streams live
+  progress over a channel.
+- **11 providers / 31 models** (`models.rs`), all OpenAI-compatible: Anthropic,
+  OpenAI, xAI, NVIDIA NIM, DeepSeek, Mistral, Qwen, Groq, Together, OpenRouter,
+  Ollama. Models like **Qwen / DeepSeek / Llama** usable directly.
+- **Axum web dashboard** (`app/`): multi-model selection panel, live execution
+  console, findings, agent browser, embedded HTML report. Single binary serves
+  the SPA — no npm/build.
+- **CLI**: `neurosploit serve | run <url> | agents | models`, plus `--offline`
+  mode to exercise the full pipeline without any API keys.
+
+## Usage
+
+```bash
+cd neurosploit-rs && cargo build --release
+./target/release/neurosploit serve                 # → http://127.0.0.1:8788
+./target/release/neurosploit run https://t.example \
+    --model anthropic:claude-opus-4-8 --model openai:gpt-5.1 --vote-n 3
+```
+
+---
+
 # NeuroSploit v3.3.0 — Release Notes
 
 **Release Date:** June 2026

@@ -19,6 +19,21 @@ and a **reinforcement-learning** loop that gets smarter every run.
 
 > The previous Python orchestration now lives in [`legacy/`](legacy/README.md).
 
+> **🦀 v3.4.0 — Rust multi-model harness.** A new high-performance harness lives
+> in [`neurosploit-rs/`](neurosploit-rs/): a single Rust binary (`tokio` + `axum`)
+> that drives a **pool of LLM models** with concurrency, **provider failover**,
+> and **N-model validator voting** (N models must agree a finding is real before
+> it counts). It serves its own solid web dashboard. Build & run:
+> ```bash
+> cd neurosploit-rs && cargo build --release
+> ./target/release/neurosploit serve            # web dashboard → :8788
+> ./target/release/neurosploit run https://target.example --model anthropic:claude-opus-4-8 --model openai:gpt-5.1
+> ./target/release/neurosploit run https://t.example --offline   # pipeline self-test, no API keys
+> ```
+> 11 OpenAI-compatible providers / 31 models (Claude, GPT, Grok, NVIDIA NIM,
+> DeepSeek, Mistral, Qwen, Groq, Together, OpenRouter, Ollama). Reads the same
+> `agents_md/` library (213 agents).
+
 ---
 
 ## Why this architecture

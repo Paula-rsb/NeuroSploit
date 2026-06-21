@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>NeuroSploit v3.4.0</title>
+<style>
+ :root{--bg:#080910;--bg2:#0d0f17;--panel:#13151f;--panel2:#1a1d29;--line:#252938;--text:#e7e9ee;
+  --muted:#878da1;--accent:#8b5cf6;--accent2:#a855f7;--cy:#22d3ee;--ok:#34d399;--warn:#fbbf24;--crit:#f87171;--high:#fb923c}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;
+  display:grid;grid-template-columns:228px 1fr;min-height:100vh}
+ .side{background:linear-gradient(180deg,var(--bg2),#0a0b12);border-right:1px solid var(--line);padding:20px 14px;
+  display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh}
+ .brand{display:flex;align-items:center;gap:10px;margin:2px 6px 20px}
+ .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:grid;place-items:center;font-weight:800;color:#fff;box-shadow:0 6px 22px rgba(139,92,246,.4)}
+ .brand b{font-size:15px}.brand span{color:var(--muted);font-size:11px;display:block;margin-top:-2px}
+ .nav{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;color:var(--muted);cursor:pointer;font-size:13.5px}
+ .nav:hover{background:var(--panel);color:var(--text)}
+ .nav.on{background:linear-gradient(135deg,rgba(139,92,246,.22),rgba(168,85,247,.12));color:#fff;box-shadow:inset 0 0 0 1px rgba(139,92,246,.35)}
+ .sf{margin-top:auto;font-size:11px;color:var(--muted);padding:10px 8px;border-top:1px solid var(--line)}
+ .badge-rs{display:inline-block;font-size:9px;font-weight:700;color:#fff;background:#dea584;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle}
+ main{padding:26px 32px;max-width:1060px}
+ h1{font-size:20px;margin:0}.sub{color:var(--muted);font-size:12.5px}
+ .head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
+ .view{display:none}.view.on{display:block}
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
+ label{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px}
+ .field{margin-bottom:15px}
+ input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;
+  padding:10px 11px;font-size:13.5px;outline:none;font-family:inherit}
+ textarea{resize:vertical;min-height:70px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+ input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+ .row{display:flex;gap:12px}.row>*{flex:1}
+ .mpanel{max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:6px}
+ .mopt{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;font-size:12.5px;cursor:pointer}
+ .mopt:hover{background:var(--panel2)}.mopt input{accent-color:var(--accent);width:15px;height:15px}
+ .kind{font-size:9px;padding:1px 6px;border-radius:4px;background:var(--line);color:var(--muted);text-transform:uppercase}
+ .kind.cli{background:rgba(139,92,246,.2);color:#c4b5fd}.kind.meta{background:rgba(34,211,238,.14);color:var(--cy)}
+ .toggles{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 14px}
+ .toggle{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;font-size:12.5px}
+ .toggle.on{border-color:var(--accent)}.toggle input{accent-color:var(--accent)}
+ .btns{display:flex;gap:10px}
+ button{border:0;border-radius:10px;padding:11px 16px;font-size:13.5px;font-weight:600;cursor:pointer}
+ .run{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;flex:1}.run:hover{filter:brightness(1.08)}
+ .ghost{background:var(--panel2);color:var(--text);border:1px solid var(--line)}.ghost:hover{border-color:var(--accent)}
+ button:disabled{opacity:.5;cursor:not-allowed}
+ .pill{display:inline-flex;gap:5px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:11.5px;color:var(--muted);margin-right:7px}
+ .pill b{color:var(--text)}
+ .term{background:#06070c;border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-top:14px;
+  font:12px/1.6 ui-monospace,Menlo,monospace;max-height:260px;overflow:auto;white-space:pre-wrap;color:#cbd3e6;display:none}
+ .term .h{color:var(--accent2)}.term .ok{color:var(--ok)}.term .e{color:var(--crit)}.term .v{color:var(--cy)}
+ .sevrow{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;display:none}
+ .sev{border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700}
+ .sev.Critical{background:rgba(248,113,113,.16);color:var(--crit)}.sev.High{background:rgba(251,146,60,.16);color:var(--high)}
+ .sev.Medium{background:rgba(251,191,36,.15);color:var(--warn)}.sev.Low{background:rgba(34,211,238,.14);color:var(--cy)}
+ .sev.none{background:rgba(52,211,153,.13);color:var(--ok)}
+ .find{border:1px solid var(--line);border-radius:11px;padding:14px;margin:10px 0;background:var(--panel2)}
+ .find h4{margin:0 0 5px;font-size:14px}.find .m{color:var(--muted);font-size:12px}
+ .find pre{background:#06070c;border-radius:7px;padding:9px;font-size:11.5px;overflow:auto;margin:7px 0}
+ .alist{max-height:430px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+ .arow{display:flex;gap:10px;padding:9px 13px;border-bottom:1px solid var(--line);font-size:13px;align-items:center}
+ .arow:last-child{border:0}.arow code{color:var(--accent2)}.arow .t{color:var(--muted);margin-left:auto;font-size:11.5px}
+ .muted{color:var(--muted);font-size:12.5px}a{color:var(--accent2)}
+ .dl{display:inline-flex;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 13px;text-decoration:none;color:var(--text);font-size:12.5px}
+ .dl:hover{border-color:var(--accent)}iframe{width:100%;height:520px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-top:12px}
+</style>
+</head>
+<body>
+ <aside class="side">
+  <div class="brand"><div class="logo">N</div><div><b>NeuroSploit<span class="badge-rs">RUST</span></b><span>v3.4.0 · Multi-Model Harness</span></div></div>
+  <div class="nav on" data-v="run">▶ Run</div>
+  <div class="nav" data-v="agents">⛓ Agents</div>
+  <div class="nav" data-v="models">🧠 Models</div>
+  <div class="nav" data-v="reports">📄 Report</div>
+  <div class="sf" id="sf">loading…</div>
+ </aside>
+ <main>
+  <section class="view on" id="v-run">
+   <div class="head"><div><h1>Run engagement</h1><div class="sub">Parallel agents · provider failover · N-model validator voting.</div></div></div>
+   <div class="card">
+    <div class="field"><label>Targets (one URL per line)</label><textarea id="targets" placeholder="https://target-one.example&#10;https://target-two.example"></textarea></div>
+    <div class="field"><label>Model panel (1st = primary · others fail over &amp; vote)</label><div class="mpanel" id="mpanel"></div></div>
+    <div class="row">
+     <div class="field"><label>Validator votes (N)</label><input id="voten" type="number" value="3" min="1" max="9"/></div>
+     <div class="field"><label>Max agents (0 = all)</label><input id="maxa" type="number" value="8" min="0"/></div>
+    </div>
+    <div class="toggles"><label class="toggle on" id="t-off"><input type="checkbox" id="offline" checked/> Offline (no API calls — pipeline self-test)</label></div>
+    <div class="btns"><button class="run" id="go">▶ Run harness</button></div>
+    <div class="term" id="term"></div>
+    <div class="sevrow" id="sevrow"></div>
+    <div id="findings"></div>
+   </div>
+  </section>
+  <section class="view" id="v-agents">
+   <div class="head"><div><h1>Agent library</h1><div class="sub" id="agentsub">…</div></div></div>
+   <div class="card"><div class="field"><input id="asearch" placeholder="🔎 filter agents"/></div><div class="alist" id="alist"></div></div>
+  </section>
+  <section class="view" id="v-models">
+   <div class="head"><div><h1>Models</h1><div class="sub">OpenAI-compatible providers — CLI &amp; API.</div></div></div>
+   <div class="card" id="modelcard"></div>
+  </section>
+  <section class="view" id="v-reports">
+   <div class="head"><div><h1>Report</h1><div class="sub">Last engagement.</div></div></div>
+   <div class="card" id="reportcard"><span class="muted">Run an engagement to generate a report.</span></div>
+  </section>
+ </main>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+let INFO=null,AGENTS=[],lastRun=null;
+$$('.nav').forEach(n=>n.onclick=()=>{$$('.nav').forEach(x=>x.classList.remove('on'));n.classList.add('on');
+ $$('.view').forEach(v=>v.classList.remove('on'));$('#v-'+n.dataset.v).classList.add('on');});
+$('#t-off').querySelector('input').onchange=e=>$('#t-off').classList.toggle('on',e.target.checked);
+
+async function init(){
+ INFO=await (await fetch('/api/info')).json();
+ $('#sf').textContent=`${INFO.agents.total} agents · ${INFO.providers.length} providers`;
+ $('#agentsub').textContent=`${INFO.agents.vulns} vuln specialists · ${INFO.agents.meta} meta-agents`;
+ // model panel
+ let mh='',first=true;
+ INFO.providers.forEach(p=>p.models.forEach(m=>{const id=p.key+':'+m;
+  mh+=`<label class="mopt"><input type="checkbox" value="${id}" ${first?'checked':''}/> <span class="kind ${p.kind}">${p.kind}</span> <code>${id}</code></label>`;first=false;}));
+ $('#mpanel').innerHTML=mh;
+ // models tab
+ $('#modelcard').innerHTML=INFO.providers.map(p=>`<div style="margin-bottom:12px"><b>${p.label}</b> <span class="kind ${p.kind}">${p.kind}</span>
+  <div class="muted" style="margin-top:4px">${p.models.map(m=>'<code>'+m+'</code>').join(' · ')}</div></div>`).join('');
+ AGENTS=(await (await fetch('/api/agents')).json()).agents;renderAgents();
+}
+function selectedModels(){return $$('#mpanel input:checked').map(i=>i.value);}
+function logLine(t){const T=$('#term');T.style.display='block';const d=document.createElement('div');
+ d.className=t.startsWith('===')?'h':t.startsWith('vote')&&t.includes('CONFIRMED')?'ok':t.includes('failed')||t.startsWith('ERROR')?'e':t.startsWith('recon')||t.startsWith('exploit')?'v':'';
+ d.textContent=t;T.appendChild(d);T.scrollTop=T.scrollHeight;}
+let seen=0;
+async function run(){
+ const targets=$('#targets').value.split('\n').map(s=>s.trim()).filter(Boolean);
+ if(!targets.length){$('#targets').focus();$('#targets').style.borderColor='var(--crit)';return;}
+ $('#go').disabled=true;$('#term').innerHTML='';$('#sevrow').style.display='none';$('#findings').innerHTML='';
+ const body={targets,models:selectedModels(),vote_n:+$('#voten').value,max_agents:+$('#maxa').value,offline:$('#offline').checked};
+ logLine('Queued '+targets.length+' target(s) · panel: '+(body.models.join(', ')||'default'));
+ const r=await (await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+ if(r.error){logLine('ERROR: '+r.error);$('#go').disabled=false;return;}
+ poll(r.run_id);
+}
+async function poll(id){
+ const st=await (await fetch('/api/status/'+id)).json();
+ (st.log||[]).slice(seen).forEach(logLine);seen=(st.log||[]).length;
+ if(!st.done){setTimeout(()=>poll(id),600);return;}
+ seen=0;$('#go').disabled=false;lastRun=id;render(st.result||{});
+}
+function render(res){
+ const sr=$('#sevrow');sr.style.display='flex';
+ const f=res.findings||[],by={};f.forEach(x=>by[x.severity]=(by[x.severity]||0)+1);
+ sr.innerHTML=f.length?Object.entries(by).map(([k,v])=>`<span class="sev ${k}">${k}: ${v}</span>`).join('')
+  :`<span class="sev none">✓ complete — ${(res.agents_ran||[]).length} agents ran, 0 validated findings</span>`;
+ $('#findings').innerHTML=f.map(x=>`<div class="find"><h4><span class="sev ${x.severity}" style="font-size:11px">${x.severity}</span> ${x.title||''}</h4>
+  <div class="m">${x.agent||''} · ${x.cwe||''} · votes ${x.votes||'-'} · conf ${(x.confidence||0).toFixed(2)} · ${x.endpoint||''}</div>
+  ${x.payload?`<pre>${(x.payload+'').replace(/</g,'&lt;')}</pre>`:''}${x.evidence?`<div class="m">Evidence: ${x.evidence}</div>`:''}</div>`).join('');
+ const rc=$('#reportcard');
+ rc.innerHTML=`<a class="dl" href="/report/${lastRun}" target="_blank">⬇ open HTML report</a><iframe src="/report/${lastRun}"></iframe>`;
+}
+function renderAgents(){const q=$('#asearch').value.toLowerCase();
+ $('#alist').innerHTML=AGENTS.filter(a=>!q||(a.name+a.title+a.cwe).toLowerCase().includes(q)).slice(0,400)
+  .map(a=>`<div class="arow"><span class="kind ${a.kind}">${a.kind}</span> <code>${a.name}</code> <span class="t">${(a.title||'').replace(' Agent','')} ${a.cwe?'· '+a.cwe:''}</span></div>`).join('')||'<div class="arow muted">no match</div>';}
+$('#asearch').oninput=renderAgents;
+$('#go').onclick=run;$('#targets').oninput=()=>$('#targets').style.borderColor='';
+init();
+</script>
+</body>
+</html>
