@@ -74,6 +74,12 @@ pub struct RunConfig {
     /// of HTTP API keys.
     #[serde(default)]
     pub subscription: bool,
+    /// Directory to persist run artifacts (recon/exploit/findings json+md).
+    #[serde(default)]
+    pub workdir: Option<String>,
+    /// Path to the RL reward state file.
+    #[serde(default)]
+    pub rl_path: Option<String>,
 }
 
 fn default_vote() -> usize {
@@ -93,6 +99,8 @@ impl RunConfig {
             max_agents: 0,
             offline: false,
             subscription: false,
+            workdir: None,
+            rl_path: None,
         }
     }
 }

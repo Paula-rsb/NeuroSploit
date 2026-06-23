@@ -96,3 +96,7 @@ reports/*.pdf
 neurosploit-rs/target/
 reports/*.html
 reports/report_rs.html
+runs/
+data/rl_state_rs.json
+neurosploit-rs/runs/
+v34_gui.png

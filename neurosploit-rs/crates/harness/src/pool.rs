@@ -13,14 +13,21 @@ pub struct ModelPool {
     sem: Arc<Semaphore>,
     pub candidates: Vec<ModelRef>,
     pub subscription: bool,
+    /// Path to an `.mcp.json` (Playwright) used on the subscription/CLI path.
+    pub mcp_config: Option<String>,
 }
 
 impl ModelPool {
     pub fn new(models: Vec<ModelRef>, concurrency: usize) -> Self {
-        Self::with_auth(models, concurrency, false)
+        Self::with_auth(models, concurrency, false, None)
     }
 
-    pub fn with_auth(models: Vec<ModelRef>, concurrency: usize, subscription: bool) -> Self {
+    pub fn with_auth(
+        models: Vec<ModelRef>,
+        concurrency: usize,
+        subscription: bool,
+        mcp_config: Option<String>,
+    ) -> Self {
         let concurrency = concurrency.max(1);
         ModelPool {
             client: ChatClient::new(),
@@ -31,13 +38,17 @@ impl ModelPool {
                 models
             },
             subscription,
+            mcp_config,
         }
     }
 
-    /// One completion for a model, via subscription CLI or HTTP API.
+    /// One completion for a model, via subscription CLI (optionally with MCP) or HTTP API.
     async fn one(&self, m: &ModelRef, system: &str, user: &str) -> Result<String> {
         if self.subscription && cli_binary_for(&m.provider).is_some() {
-            return self.client.chat_cli(&m.provider, &m.model, system, user).await;
+            return self
+                .client
+                .chat_cli(&m.provider, &m.model, system, user, self.mcp_config.as_deref())
+                .await;
         }
         self.client.chat(m, system, user).await
     }

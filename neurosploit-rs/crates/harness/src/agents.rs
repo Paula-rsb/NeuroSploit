@@ -21,20 +21,24 @@ pub struct Agent {
 pub struct Library {
     pub vulns: Vec<Agent>,
     pub meta: Vec<Agent>,
+    pub recon: Vec<Agent>,
+    pub code: Vec<Agent>,
 }
 
 impl Library {
     pub fn total(&self) -> usize {
-        self.vulns.len() + self.meta.len()
+        self.vulns.len() + self.meta.len() + self.recon.len() + self.code.len()
     }
 }
 
-/// Load `<base>/agents_md/{vulns,meta}/*.md`.
+/// Load `<base>/agents_md/{vulns,meta,recon,code}/*.md`.
 pub fn load(base: &Path) -> Library {
     let root = base.join("agents_md");
     Library {
         vulns: load_dir(&root.join("vulns"), "vuln"),
         meta: load_dir(&root.join("meta"), "meta"),
+        recon: load_dir(&root.join("recon"), "recon"),
+        code: load_dir(&root.join("code"), "code"),
     }
 }
 

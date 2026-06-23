@@ -11,12 +11,15 @@ pub mod models;
 pub mod pipeline;
 pub mod pool;
 pub mod report;
+pub mod rl;
 pub mod types;
 
 pub use agents::{Agent, Library};
 pub use models::{
-    cli_binary_for, installed_cli_backends, provider_for, providers, ChatClient, ModelRef, Provider,
+    cli_binary_for, installed_cli_backends, provider_for, providers, write_mcp_config, ChatClient,
+    ModelRef, Provider,
 };
+pub use pipeline::{run_whitebox, RunOutput};
 pub use pipeline::run;
 pub use pool::ModelPool;
 pub use types::{Finding, RunConfig};

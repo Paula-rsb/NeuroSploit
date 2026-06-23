@@ -57,7 +57,7 @@ async fn info(State(st): State<Arc<AppState>>) -> Json<Value> {
         .collect();
     Json(json!({
         "version": "3.4.0",
-        "agents": {"vulns": lib.vulns.len(), "meta": lib.meta.len(), "total": lib.total()},
+        "agents": {"vulns": lib.vulns.len(), "meta": lib.meta.len(), "recon": lib.recon.len(), "code": lib.code.len(), "total": lib.total()},
         "providers": provs,
         "cli_backends": harness::installed_cli_backends(),
     }))
@@ -68,6 +68,8 @@ async fn agents_list(State(st): State<Arc<AppState>>) -> Json<Value> {
     let v: Vec<Value> = lib
         .vulns
         .iter()
+        .chain(lib.recon.iter())
+        .chain(lib.code.iter())
         .chain(lib.meta.iter())
         .map(|a| json!({"name": a.name, "title": a.title, "cwe": a.cwe, "kind": a.kind}))
         .collect();
@@ -128,6 +130,16 @@ async fn run(State(st): State<Arc<AppState>>, Json(body): Json<Value>) -> Json<V
         let max_agents = body.get("max_agents").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let offline = body.get("offline").and_then(|v| v.as_bool()).unwrap_or(false);
         let subscription = body.get("subscription").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mcp = body.get("mcp").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mode = body.get("mode").and_then(|v| v.as_str()).unwrap_or("web").to_string();
+        // Whitebox uses a repo path instead of URLs.
+        if mode == "whitebox" {
+            if let Some(p) = body.get("repo").and_then(|v| v.as_str()) {
+                if !p.trim().is_empty() {
+                    targets = vec![p.trim().to_string()];
+                }
+            }
+        }
 
         let lib = agents::load(&base);
         let refs: Vec<ModelRef> = if models.is_empty() {
@@ -135,7 +147,13 @@ async fn run(State(st): State<Arc<AppState>>, Json(body): Json<Value>) -> Json<V
         } else {
             models.iter().map(|s| ModelRef::parse(s)).collect()
         };
-        let pool = ModelPool::with_auth(refs, 8, subscription);
+        let mcp_config = if mcp && subscription {
+            harness::write_mcp_config(&base.join("runs").join("_mcp")).ok().map(|p| p.display().to_string())
+        } else {
+            None
+        };
+        let pool = ModelPool::with_auth(refs, 8, subscription, mcp_config);
+        let rl_path = base.join("data").join("rl_state_rs.json").display().to_string();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
         let stf = st2.clone();
@@ -163,8 +181,14 @@ async fn run(State(st): State<Arc<AppState>>, Json(body): Json<Value>) -> Json<V
             cfg.max_agents = max_agents;
             cfg.offline = offline;
             cfg.subscription = subscription;
-            let _ = tx.send(format!("=== target: {url} ===")).await;
-            let out = harness::run(cfg, &lib, &pool, tx.clone()).await;
+            cfg.rl_path = Some(rl_path.clone());
+            cfg.workdir = Some(base.join("runs").join(format!("{}-{}", slug(url), now_ts())).display().to_string());
+            let _ = tx.send(format!("=== {}: {url} ===", if mode == "whitebox" { "whitebox repo" } else { "target" })).await;
+            let out = if mode == "whitebox" {
+                harness::run_whitebox(cfg, &lib, &pool, tx.clone()).await
+            } else {
+                harness::run(cfg, &lib, &pool, tx.clone()).await
+            };
             all_findings.extend(out.findings);
             all_ran.extend(out.agents_ran);
         }
@@ -196,4 +220,17 @@ async fn status(Path(id): Path<String>, State(st): State<Arc<AppState>>) -> Json
 async fn report_html(Path(id): Path<String>, State(st): State<Arc<AppState>>) -> Html<String> {
     let g = st.runs.lock().unwrap();
     Html(g.get(&id).and_then(|r| r.report.clone()).unwrap_or_else(|| "<h1>no report</h1>".into()))
+}
+
+fn slug(s: &str) -> String {
+    let s = s.replace("https://", "").replace("http://", "");
+    let mut o: String = s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+    o.truncate(50);
+    let o = o.trim_matches('_').to_string();
+    if o.is_empty() { "target".into() } else { o }
+}
+
+fn now_ts() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }

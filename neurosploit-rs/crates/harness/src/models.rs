@@ -28,6 +28,8 @@ pub fn providers() -> Vec<Provider> {
             models: vec!["gpt-5.1", "o4"] },
         Provider { key: "xai", label: "xAI Grok", base_url: "https://api.x.ai/v1", env_key: "XAI_API_KEY", kind: "cli",
             models: vec!["grok-4", "grok-4-fast"] },
+        Provider { key: "gemini", label: "Google Gemini", base_url: "https://generativelanguage.googleapis.com/v1beta/openai", env_key: "GEMINI_API_KEY", kind: "cli",
+            models: vec!["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] },
         Provider { key: "nvidia_nim", label: "NVIDIA NIM", base_url: "https://integrate.api.nvidia.com/v1", env_key: "NVIDIA_NIM_API_KEY", kind: "api",
             models: vec!["nvidia/llama-3.3-nemotron-super-49b-v1", "deepseek-ai/deepseek-r1", "qwen/qwen2.5-coder-32b-instruct"] },
         Provider { key: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com/v1", env_key: "DEEPSEEK_API_KEY", kind: "api",
@@ -124,9 +126,20 @@ impl ChatClient {
 
 impl ChatClient {
     /// Complete via a locally-installed **agentic CLI subscription** (Claude
-    /// Code / Codex / Grok) instead of an API key. This uses the user's logged-in
-    /// subscription, so no provider key is required.
-    pub async fn chat_cli(&self, provider: &str, model: &str, system: &str, user: &str) -> Result<String> {
+    /// Code / Codex / Grok / Gemini) instead of an API key. This uses the user's
+    /// logged-in subscription, so no provider key is required.
+    ///
+    /// When `mcp_config` is set (a path to an `.mcp.json`), Claude/Codex run with
+    /// the MCP servers enabled and tool autonomy, so agents can actually drive
+    /// **Playwright** (browse, execute JS, screenshot) during execution.
+    pub async fn chat_cli(
+        &self,
+        provider: &str,
+        model: &str,
+        system: &str,
+        user: &str,
+        mcp_config: Option<&str>,
+    ) -> Result<String> {
         let bin = cli_binary_for(provider)
             .ok_or_else(|| anyhow!("no CLI/subscription backend for provider '{}'", provider))?;
         let prompt = format!("{system}\n\n{user}");
@@ -135,10 +148,24 @@ impl ChatClient {
             // Claude Code headless print mode (uses the Claude subscription login).
             "claude" => {
                 cmd.arg("-p").arg("--model").arg(model);
+                if let Some(mcp) = mcp_config {
+                    cmd.arg("--mcp-config").arg(mcp).arg("--dangerously-skip-permissions");
+                    // Required to allow tool autonomy when running as root.
+                    cmd.env("IS_SANDBOX", "1");
+                }
             }
             // Codex non-interactive exec (uses the ChatGPT/Codex login), prompt on stdin.
             "codex" => {
-                cmd.arg("exec").arg("--model").arg(model).arg("-");
+                cmd.arg("exec").arg("--model").arg(model);
+                if let Some(mcp) = mcp_config {
+                    cmd.arg("--config").arg(format!("mcp_config_file={mcp}"))
+                        .arg("--dangerously-bypass-approvals-and-sandbox");
+                }
+                cmd.arg("-");
+            }
+            // Google Gemini CLI (uses the Gemini subscription login).
+            "gemini" => {
+                cmd.arg("-m").arg(model);
             }
             // Grok CLI, prompt on stdin (best-effort flags).
             "grok" => {
@@ -166,6 +193,7 @@ pub fn cli_binary_for(provider: &str) -> Option<&'static str> {
         "anthropic" => Some("claude"),
         "openai" => Some("codex"),
         "xai" => Some("grok"),
+        "gemini" => Some("gemini"),
         _ => None,
     }
 }
@@ -179,7 +207,21 @@ pub fn binary_in_path(name: &str) -> bool {
 
 /// Which subscription CLI backends are installed locally.
 pub fn installed_cli_backends() -> Vec<&'static str> {
-    ["claude", "codex", "grok"].into_iter().filter(|b| binary_in_path(b)).collect()
+    ["claude", "codex", "grok", "gemini"].into_iter().filter(|b| binary_in_path(b)).collect()
+}
+
+/// Write a Playwright `.mcp.json` into `dir` and return its path, so the agentic
+/// CLI can drive a real browser (DOM/JS/network/screenshots) during execution.
+pub fn write_mcp_config(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(".mcp.json");
+    let cfg = r#"{
+  "mcpServers": {
+    "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"] }
+  }
+}"#;
+    std::fs::write(&path, cfg)?;
+    Ok(path)
 }
 
 impl Default for ChatClient {
