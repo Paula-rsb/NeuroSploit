@@ -28,7 +28,9 @@ impl ModelPool {
         subscription: bool,
         mcp_config: Option<String>,
     ) -> Self {
-        let concurrency = concurrency.max(1);
+        // Subscription spawns one CLI process per call; too many in parallel
+        // trips provider rate limits, so cap concurrency on that path.
+        let concurrency = if subscription { concurrency.clamp(1, 3) } else { concurrency.max(1) };
         ModelPool {
             client: ChatClient::new(),
             sem: Arc::new(Semaphore::new(concurrency)),
@@ -42,15 +44,30 @@ impl ModelPool {
         }
     }
 
-    /// One completion for a model, via subscription CLI (optionally with MCP) or HTTP API.
+    /// One completion for a model, via subscription CLI (optionally with MCP) or
+    /// HTTP API, with a short retry/backoff to ride out transient failures
+    /// (rate limits, MCP cold-starts, network blips).
     async fn one(&self, m: &ModelRef, system: &str, user: &str) -> Result<String> {
-        if self.subscription && cli_binary_for(&m.provider).is_some() {
-            return self
-                .client
-                .chat_cli(&m.provider, &m.model, system, user, self.mcp_config.as_deref())
-                .await;
+        let use_cli = self.subscription && cli_binary_for(&m.provider).is_some();
+        let mut last = anyhow::anyhow!("no attempt");
+        for attempt in 0..3u64 {
+            if attempt > 0 {
+                // 1.5s, 4.5s backoff.
+                tokio::time::sleep(std::time::Duration::from_millis(1500 * attempt * attempt.max(1))).await;
+            }
+            let r = if use_cli {
+                self.client
+                    .chat_cli(&m.provider, &m.model, system, user, self.mcp_config.as_deref())
+                    .await
+            } else {
+                self.client.chat(m, system, user).await
+            };
+            match r {
+                Ok(t) => return Ok(t),
+                Err(e) => last = e,
+            }
         }
-        self.client.chat(m, system, user).await
+        Err(last)
     }
 
     /// Complete a prompt, trying each candidate model until one succeeds.

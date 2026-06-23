@@ -180,10 +180,29 @@ impl ChatClient {
             // Drop closes stdin so the CLI processes the prompt and exits.
         }
         let out = child.wait_with_output().await?;
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr);
         if !out.status.success() {
-            return Err(anyhow!("{} subscription CLI failed: {}", bin, truncate(&String::from_utf8_lossy(&out.stderr), 200)));
+            // The CLI often writes the real reason (rate limit, auth) to stdout,
+            // not stderr — surface both plus the exit code so the error isn't blank.
+            let detail = if !stderr.trim().is_empty() {
+                stderr.trim().to_string()
+            } else if !stdout.is_empty() {
+                stdout.clone()
+            } else {
+                "no output".to_string()
+            };
+            return Err(anyhow!(
+                "{} subscription CLI exit {}: {}",
+                bin,
+                out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+                truncate(&detail, 240)
+            ));
         }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        if stdout.is_empty() {
+            return Err(anyhow!("{} subscription CLI returned empty output", bin));
+        }
+        Ok(stdout)
     }
 }
 
