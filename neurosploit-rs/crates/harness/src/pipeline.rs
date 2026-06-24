@@ -257,6 +257,137 @@ pub async fn run_whitebox(cfg: RunConfig, lib: &Library, pool: &ModelPool, tx: S
     finish(cfg, lib, "{}".into(), transcript, findings, selected, &mut rl, tx).await
 }
 
+/// Greybox engagement: review the source code AND exploit the running app in one
+/// pipeline — code-review findings become *leads* that guide live exploitation
+/// (with credentials/auth so testing is authenticated).
+pub async fn run_greybox(cfg: RunConfig, lib: &Library, pool: &ModelPool, tx: Sender<String>) -> RunOutput {
+    let repo = cfg.repo.clone().unwrap_or_default();
+    let _ = tx.send(format!("GREYBOX · live: {} · repo: {} · {} code agents",
+        cfg.target, repo, lib.code.len())).await;
+
+    // ---- 1. Recon the live target -------------------------------------
+    let recon = if cfg.offline {
+        "{}".to_string()
+    } else {
+        match pool.complete_routed(Task::Recon, RECON_SYS,
+            &format!("{}{}Target: {}", operator_directives(&cfg), tool_doctrine(pool.mcp_config.is_some()), cfg.target)).await {
+            Ok((m, t)) => { let _ = tx.send(format!("recon complete via {}", m.label())).await; t }
+            Err(e) => { let _ = tx.send(format!("recon failed ({e})")).await; "{}".to_string() }
+        }
+    };
+
+    // ---- 2. Review the source for leads -------------------------------
+    let context = collect_repo_context(Path::new(&repo), 200, 90_000);
+    let _ = tx.send(format!("collected {} bytes of source for code review", context.len())).await;
+    let mut rl = cfg.rl_path.as_ref().map(|p| RlState::load(Path::new(p))).unwrap_or_default();
+
+    let mut code_leads = String::new();
+    if !cfg.offline && !context.is_empty() {
+        let code_cap = if cfg.max_agents > 0 { cfg.max_agents.min(lib.code.len()) } else { lib.code.len().min(12) };
+        let code_agents: Vec<Agent> = lib.code.iter().take(code_cap).cloned().collect();
+        let leads: Vec<Finding> = stream::iter(code_agents.into_iter())
+            .map(|ag| {
+                let ctx = context.clone();
+                let txc = tx.clone();
+                async move {
+                    let user = format!(
+                        "{}\n\nSOURCE:\n```\n{}\n```\nReply ONLY a JSON array of issues (may be []): \
+                         {{id,title,severity,cwe,endpoint,payload,evidence,impact,remediation,confidence}} \
+                         where endpoint is file:line.",
+                        ag.user.replace("{target}", "the repository").replace("{recon_json}", "{}"), ctx
+                    );
+                    match pool.complete_routed(Task::Select, &ag.system, &user).await {
+                        Ok((_, text)) => { let f = extract_findings(&text, &ag.name);
+                            let _ = txc.send(format!("review {} → {} lead(s)", ag.name, f.len())).await; f }
+                        Err(_) => vec![],
+                    }
+                }
+            })
+            .buffer_unordered(cfg.concurrency)
+            .collect::<Vec<Vec<Finding>>>().await.into_iter().flatten().collect();
+        let leads = dedup_findings(leads);
+        if !leads.is_empty() {
+            code_leads.push_str("CODE-REVIEW LEADS (confirm these against the LIVE app):\n");
+            for l in leads.iter().take(25) {
+                code_leads.push_str(&format!("- [{}] {} @ {} ({})\n", l.severity, l.title, l.endpoint, l.cwe));
+            }
+            code_leads.push('\n');
+        }
+        let _ = tx.send(format!("{} code lead(s) → guiding live exploitation", leads.len())).await;
+    }
+
+    // ---- 3. Select live agents (recon + focus + code leads) -----------
+    let mut ranked: Vec<Agent> = lib.vulns.clone();
+    ranked.sort_by(|a, b| rl.weight(&b.name).partial_cmp(&rl.weight(&a.name)).unwrap_or(std::cmp::Ordering::Equal));
+    let cap = if cfg.max_agents > 0 { cfg.max_agents.min(ranked.len()) } else { ranked.len() };
+    let focus = format!("{} {}", cfg.instructions.clone().unwrap_or_default(), code_leads);
+
+    if cfg.offline {
+        let selected: Vec<Agent> = ranked.into_iter().take(cap).collect();
+        let _ = tx.send(format!("offline: selected {} agent(s); no live exploitation", selected.len())).await;
+        let artifacts = persist(&cfg, &recon, &code_leads, &[]);
+        return RunOutput { target: cfg.target.clone(), findings: vec![],
+            agents_ran: selected.iter().map(|a| a.name.clone()).collect(), candidates: 0, recon, artifacts };
+    }
+
+    let chosen = select_agents(pool, &recon, &focus, &ranked, &tx).await;
+    let selected: Vec<Agent> = if !chosen.is_empty() {
+        let sel: Vec<Agent> = ranked.iter().filter(|a| chosen.iter().any(|c| c == &a.name)).cloned().collect();
+        if sel.is_empty() { heuristic_select(&ranked, &recon, &focus, cap) } else { sel.into_iter().take(cap).collect() }
+    } else {
+        heuristic_select(&ranked, &recon, &focus, cap)
+    };
+    let selected: Vec<Agent> = { let mut seen = std::collections::HashSet::new();
+        selected.into_iter().filter(|a| seen.insert(a.name.clone())).collect() };
+    let _ = tx.send(format!("selected {} live agent(s): {}", selected.len(),
+        selected.iter().map(|a| a.name.clone()).collect::<Vec<_>>().join(", "))).await;
+
+    // ---- 4. Exploit live, guided by code leads ------------------------
+    let target = cfg.target.clone();
+    let verbose = cfg.verbose;
+    let mcp_on = pool.mcp_config.is_some();
+    let directives = operator_directives(&cfg);
+    let recon_ctx: String = recon.chars().take(3000).collect();
+    let leads_ctx = code_leads.clone();
+    let raw: Vec<(String, String, Vec<Finding>)> = stream::iter(selected.iter().cloned())
+        .map(|ag| {
+            let target = target.clone();
+            let recon = recon_ctx.clone();
+            let directives = directives.clone();
+            let leads = leads_ctx.clone();
+            let txc = tx.clone();
+            async move {
+                if verbose {
+                    let _ = txc.send(format!("  ▶ launching agent: {} ({})", ag.name, ag.title.replace(" Agent", ""))).await;
+                }
+                let user = format!(
+                    "AUTHORIZED greybox engagement on {target} — you also have the source review below. \
+                     Proceed and PROVE each issue against the LIVE app.\n\n{directives}{leads}{react}{doctrine}{body}\n\n\
+                     Reply ONLY a JSON array of confirmed findings (may be []): \
+                     {{id,title,severity,cwe,endpoint,payload,evidence,impact,remediation,confidence}}.",
+                    target = target, directives = directives, leads = leads,
+                    react = REACT_DOCTRINE, doctrine = tool_doctrine(mcp_on),
+                    body = ag.user.replace("{target}", &target).replace("{recon_json}", &recon),
+                );
+                match pool.complete_routed(Task::Exploit, &ag.system, &user).await {
+                    Ok((m, text)) => { let f = extract_findings(&text, &ag.name);
+                        let _ = txc.send(format!("exploit {} via {} → {} candidate(s)", ag.name, m.label(), f.len())).await;
+                        (ag.name.clone(), text, f) }
+                    Err(e) => { let _ = txc.send(format!("exploit {} failed: {e}", ag.name)).await;
+                        (ag.name.clone(), format!("ERROR: {e}"), vec![]) }
+                }
+            }
+        })
+        .buffer_unordered(cfg.concurrency)
+        .collect::<Vec<_>>().await;
+
+    let transcript = format!("{}\n{}", code_leads, transcript_of(&raw));
+    let candidates = dedup_findings(raw.iter().flat_map(|(_, _, f)| f.clone()).collect());
+    let _ = tx.send(format!("{} candidate finding(s) (deduped) — validating", candidates.len())).await;
+    let findings = validate(candidates, pool, VOTE_SYS, cfg.vote_n, &tx).await;
+    finish(cfg, lib, recon, transcript, findings, selected, &mut rl, tx).await
+}
+
 // --------------------------------------------------------------------------- shared
 
 const SELECT_SYS: &str = "You are a penetration-test orchestrator. Given recon of a target and a catalog of specialist agents, choose ONLY the agents whose preconditions clearly match the target's attack surface. Be selective. Reply with a JSON array of agent names (strings) drawn exactly from the catalog. No prose.";

@@ -20,6 +20,7 @@ struct Session {
     target: Option<String>,
     repo: Option<String>,
     auth: Option<String>,
+    creds: Option<String>,
     instructions: Option<String>,
 }
 
@@ -34,6 +35,7 @@ impl Default for Session {
             target: None,
             repo: None,
             auth: None,
+            creds: None,
             instructions: None,
         }
     }
@@ -119,19 +121,22 @@ pub async fn repl(base: &Path) -> anyhow::Result<()> {
                 println!("  subscription: {}", onoff(s.subscription));
             }
             "/target" | "/url" => {
+                // target + repo can coexist → greybox.
                 let t = if arg.starts_with("http") || arg.is_empty() { arg.to_string() } else { format!("https://{arg}") };
                 s.target = if t.is_empty() { None } else { Some(t) };
-                s.repo = None;
                 println!("  target: {}", s.target.clone().unwrap_or_else(|| "(none)".into()));
             }
             "/repo" => {
                 s.repo = if arg.is_empty() { None } else { Some(arg.to_string()) };
-                s.target = None;
                 println!("  repo: {}", s.repo.clone().unwrap_or_else(|| "(none)".into()));
             }
             "/auth" => {
                 s.auth = if arg.is_empty() { None } else { Some(arg.to_string()) };
                 println!("  auth: {}", s.auth.clone().unwrap_or_else(|| "(none)".into()));
+            }
+            "/creds" => {
+                s.creds = if arg.is_empty() { None } else { Some(arg.to_string()) };
+                println!("  creds file: {}", s.creds.clone().unwrap_or_else(|| "(none)".into()));
             }
             "/focus" | "/instructions" => {
                 s.instructions = if arg.is_empty() { None } else { Some(arg.to_string()) };
@@ -153,15 +158,22 @@ pub async fn repl(base: &Path) -> anyhow::Result<()> {
 }
 
 async fn run(base: &Path, s: &Session) {
-    let (target, whitebox) = match (&s.repo, &s.target) {
-        (Some(r), _) => (r.clone(), true),
-        (_, Some(t)) => (t.clone(), false),
+    // repo + target → greybox; repo only → whitebox; target only → black-box.
+    enum M { Black(String), White(String), Grey { url: String, repo: String } }
+    let m = match (&s.repo, &s.target) {
+        (Some(r), Some(t)) => M::Grey { url: t.clone(), repo: r.clone() },
+        (Some(r), None) => M::White(r.clone()),
+        (None, Some(t)) => M::Black(t.clone()),
         _ => {
-            println!("  \x1b[31m✗ set a /target <url> or /repo <path> first.\x1b[0m");
+            println!("  \x1b[31m✗ set a /target <url> and/or /repo <path> first.\x1b[0m");
             return;
         }
     };
-    let mut cfg = RunConfig::new(&target);
+    let primary = match &m {
+        M::Black(t) | M::White(t) => t.clone(),
+        M::Grey { url, .. } => url.clone(),
+    };
+    let mut cfg = RunConfig::new(&primary);
     cfg.models = s.models.clone();
     cfg.subscription = s.subscription;
     cfg.vote_n = s.vote_n;
@@ -169,8 +181,17 @@ async fn run(base: &Path, s: &Session) {
     cfg.verbose = true;
     cfg.instructions = s.instructions.clone();
     cfg.auth = s.auth.clone();
+    if let M::Grey { repo, .. } = &m {
+        cfg.repo = Some(repo.clone());
+    }
+    crate::apply_creds(&mut cfg, s.creds.as_deref());
 
-    match crate::run_engagement(base, cfg, s.mcp && !whitebox, whitebox).await {
+    let result = match m {
+        M::Grey { .. } => crate::run_greybox_engagement(base, cfg, s.mcp).await,
+        M::White(_) => crate::run_engagement(base, cfg, false, true).await,
+        M::Black(_) => crate::run_engagement(base, cfg, s.mcp, false).await,
+    };
+    match result {
         Ok(out) => crate::print_findings(&out),
         Err(e) => println!("  \x1b[31m✗ run failed: {e}\x1b[0m"),
     }
@@ -180,9 +201,17 @@ fn show(s: &Session) {
     println!("  ┌─ session");
     println!("  │  models   : {}", s.models.join(", "));
     println!("  │  auth mode: {}", if s.subscription { "subscription (CLI login)" } else { "API key" });
+    let mode = match (&s.repo, &s.target) {
+        (Some(_), Some(_)) => "greybox (code + live)",
+        (Some(_), None) => "white-box (code)",
+        (None, Some(_)) => "black-box (live)",
+        _ => "(set /target and/or /repo)",
+    };
+    println!("  │  mode     : {mode}");
     println!("  │  target   : {}", s.target.clone().unwrap_or_else(|| "(none)".into()));
     println!("  │  repo     : {}", s.repo.clone().unwrap_or_else(|| "(none)".into()));
     println!("  │  auth     : {}", s.auth.clone().unwrap_or_else(|| "(none)".into()));
+    println!("  │  creds    : {}", s.creds.clone().unwrap_or_else(|| "(none)".into()));
     println!("  │  focus    : {}", s.instructions.clone().unwrap_or_else(|| "(none — tests everything)".into()));
     println!("  │  mcp      : {}  votes: {}  max-agents: {}", onoff(s.mcp), s.vote_n, s.max_agents);
     println!("  └─ /run to launch");
@@ -195,8 +224,9 @@ fn help() {
     println!("    /key <prov> <key>   set a provider API key (switches to API mode)");
     println!("    /sub on|off         use local subscription login instead of API key");
     println!("    /target <url>       black-box target URL");
-    println!("    /repo <path>        white-box: analyse a local repository");
+    println!("    /repo <path>        analyse a local repo (repo+target = greybox: code + live)");
     println!("    /auth <value>       auth to send (e.g. 'Authorization: Bearer <jwt>' or 'Cookie: s=..')");
+    println!("    /creds <file.yaml>  load credentials (jwt/header/cookie/login) for authenticated tests");
     println!("    /focus <text>       steer the tests, e.g. 'injection and broken access control'");
     println!("                        (or just type the instruction with no slash)");
     println!("    /mcp on|off         enable Playwright MCP browser (subscription path)");

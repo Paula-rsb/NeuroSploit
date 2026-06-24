@@ -74,6 +74,34 @@ enum Cmd {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Greybox: review a repo's source AND exploit the running app together.
+    Greybox {
+        /// Path to the source repository.
+        repo: String,
+        /// URL of the running application.
+        #[arg(long)]
+        url: String,
+        #[arg(long = "model")]
+        models: Vec<String>,
+        /// Credentials YAML for authenticated testing (jwt/header/cookie/login).
+        #[arg(long)]
+        creds: Option<String>,
+        /// Free-text focus, e.g. "injection and broken access control".
+        #[arg(long)]
+        focus: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        max_agents: usize,
+        #[arg(long, default_value_t = 3)]
+        vote_n: usize,
+        #[arg(long)]
+        offline: bool,
+        #[arg(long)]
+        subscription: bool,
+        #[arg(long)]
+        mcp: bool,
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// Show agent library counts.
     Agents,
     /// List providers and models.
@@ -161,12 +189,59 @@ async fn main() -> anyhow::Result<()> {
             let out = run_engagement(&base, cfg, false, true).await?;
             print_findings(&out);
         }
+        Cmd::Greybox { repo, url, models, creds, focus, max_agents, vote_n, offline, subscription, mcp, verbose } => {
+            let url = if url.starts_with("http") { url } else { format!("https://{url}") };
+            let mut cfg = RunConfig::new(&url);
+            cfg.repo = Some(repo);
+            cfg.max_agents = max_agents;
+            cfg.vote_n = vote_n;
+            cfg.offline = offline;
+            cfg.subscription = subscription;
+            cfg.verbose = verbose;
+            cfg.instructions = focus;
+            if !models.is_empty() {
+                cfg.models = models;
+            }
+            apply_creds(&mut cfg, creds.as_deref());
+            let out = run_greybox_engagement(&base, cfg, mcp).await?;
+            print_findings(&out);
+        }
     }
     Ok(())
 }
 
+/// Load a creds.yaml into the run config: derive the auth header and prepend any
+/// login flow to the operator instructions.
+pub(crate) fn apply_creds(cfg: &mut RunConfig, path: Option<&str>) {
+    let Some(p) = path else { return };
+    match harness::creds::Creds::load(Path::new(p)) {
+        Some(c) => {
+            if cfg.auth.is_none() {
+                cfg.auth = c.auth_header();
+            }
+            if let Some(login) = c.login_instruction() {
+                let base = cfg.instructions.clone().unwrap_or_default();
+                cfg.instructions = Some(format!("{login}\n{base}"));
+            }
+            println!("  [*] loaded credentials from {p}");
+        }
+        None => eprintln!("  [!] no usable credentials in {p}"),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Mode { Black, White, Grey }
+
+pub(crate) async fn run_greybox_engagement(base: &Path, cfg: RunConfig, mcp: bool) -> anyhow::Result<RunOutput> {
+    run_mode(base, cfg, mcp, Mode::Grey).await
+}
+
 /// Shared engagement runner for `run` / `whitebox` / the interactive session.
-pub(crate) async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, whitebox: bool) -> anyhow::Result<RunOutput> {
+pub(crate) async fn run_engagement(base: &Path, cfg: RunConfig, mcp: bool, whitebox: bool) -> anyhow::Result<RunOutput> {
+    run_mode(base, cfg, mcp, if whitebox { Mode::White } else { Mode::Black }).await
+}
+
+async fn run_mode(base: &Path, mut cfg: RunConfig, mcp: bool, mode: Mode) -> anyhow::Result<RunOutput> {
     let lib = agents::load(base);
 
     // Unique, sortable run id → runs/<id>/
@@ -182,8 +257,11 @@ pub(crate) async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, w
     println!("  │  target : {}", cfg.target);
     println!("  │  models : {}", cfg.models.join(", "));
     println!("  │  output : {}", workdir.display());
+    if let Mode::Grey = mode {
+        println!("  │  repo   : {}", cfg.repo.clone().unwrap_or_default());
+    }
     println!("  └─ mode   : {}{}{}",
-        if whitebox { "white-box" } else { "black-box" },
+        match mode { Mode::White => "white-box", Mode::Grey => "greybox", Mode::Black => "black-box" },
         if cfg.subscription { " · subscription" } else { " · api" },
         if mcp { " · mcp" } else { "" });
 
@@ -224,10 +302,10 @@ pub(crate) async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, w
             println!("  [*] {line}");
         }
     });
-    let out = if whitebox {
-        harness::run_whitebox(cfg, &lib, &pool, tx).await
-    } else {
-        harness::run(cfg, &lib, &pool, tx).await
+    let out = match mode {
+        Mode::White => harness::run_whitebox(cfg, &lib, &pool, tx).await,
+        Mode::Grey => harness::run_greybox(cfg, &lib, &pool, tx).await,
+        Mode::Black => harness::run(cfg, &lib, &pool, tx).await,
     };
     let _ = printer.await;
 

@@ -91,6 +91,9 @@ pub struct RunConfig {
     /// authenticated user (e.g. "Authorization: Bearer <jwt>" or "Cookie: session=...").
     #[serde(default)]
     pub auth: Option<String>,
+    /// Greybox: a source repository to review alongside the live `target` URL.
+    #[serde(default)]
+    pub repo: Option<String>,
 }
 
 fn default_vote() -> usize {
@@ -115,6 +118,7 @@ impl RunConfig {
             verbose: false,
             instructions: None,
             auth: None,
+            repo: None,
         }
     }
 }

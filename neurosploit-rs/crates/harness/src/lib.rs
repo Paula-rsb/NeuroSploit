@@ -7,6 +7,7 @@
 //! **N-model voting** before scoring and reporting.
 
 pub mod agents;
+pub mod creds;
 pub mod models;
 pub mod pipeline;
 pub mod pool;
@@ -19,7 +20,7 @@ pub use models::{
     cli_binary_for, ensure_playwright_mcp, installed_cli_backends, mcp_supported, provider_for,
     providers, write_mcp_config, ChatClient, ModelRef, Provider,
 };
-pub use pipeline::{run_whitebox, RunOutput};
+pub use pipeline::{run_greybox, run_whitebox, RunOutput};
 pub use pipeline::run;
 pub use pool::{ModelPool, Task};
 pub use types::{Finding, RunConfig};

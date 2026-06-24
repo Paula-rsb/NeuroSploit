@@ -1,0 +1,22 @@
+# NeuroSploit — example credentials file for authenticated testing.
+# Pass with:  neurosploit greybox <repo> --url <app> --creds creds.yaml
+#        or:  neurosploit run <url> --creds creds.yaml   (after adding --creds support)
+#        or in the interactive session:  /creds creds.yaml
+#
+# Provide ANY of the auth materials below (first match wins), and/or a `login`
+# flow the agents will perform with curl before testing.
+
+# --- direct auth material (pick one) ---
+jwt: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWRtaW4ifQ.signature
+# header: "X-Api-Key: 0123456789abcdef"
+# cookie: "session=deadbeef; role=admin"
+
+# --- OR an automated login flow ---
+login:
+  url: http://localhost:8080/login
+  method: POST
+  username_field: username
+  password_field: password
+  username: admin
+  password: password
+  success: Logout        # text that appears on a successful login
