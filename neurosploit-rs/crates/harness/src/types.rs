@@ -83,6 +83,14 @@ pub struct RunConfig {
     /// Verbose: log each agent as it launches, recon snippet, and votes.
     #[serde(default)]
     pub verbose: bool,
+    /// Free-text instructions from the operator that steer agent selection and
+    /// execution (e.g. "focus on injection and broken access control").
+    #[serde(default)]
+    pub instructions: Option<String>,
+    /// Authentication material to use against the target so agents test as an
+    /// authenticated user (e.g. "Authorization: Bearer <jwt>" or "Cookie: session=...").
+    #[serde(default)]
+    pub auth: Option<String>,
 }
 
 fn default_vote() -> usize {
@@ -105,6 +113,8 @@ impl RunConfig {
             workdir: None,
             rl_path: None,
             verbose: false,
+            instructions: None,
+            auth: None,
         }
     }
 }

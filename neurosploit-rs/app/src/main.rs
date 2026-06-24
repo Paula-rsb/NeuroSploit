@@ -1,4 +1,6 @@
-//! NeuroSploit v3.4.1 — CLI: `run` (black-box) / `whitebox` (source) / `agents` / `models`.
+//! NeuroSploit v3.5.0 — interactive harness + CLI (`run` / `whitebox` / `agents` / `models`).
+
+mod repl;
 
 use clap::{Parser, Subcommand};
 use harness::{agents, models::ModelRef, pool::ModelPool, types::RunConfig, RunOutput};
@@ -8,8 +10,8 @@ use std::path::{Path, PathBuf};
 #[command(
     name = "neurosploit",
     version,
-    about = "NeuroSploit v3.4.1 — multi-model autonomous pentest harness",
-    long_about = "NeuroSploit v3.4.1 — a Rust multi-model harness that drives a pool of LLMs \
+    about = "NeuroSploit v3.5.0 — multi-model autonomous pentest harness",
+    long_about = "NeuroSploit v3.5.0 — a Rust multi-model harness that drives a pool of LLMs \
 (API key or local subscription: Claude/Codex/Gemini/Grok) to autonomously test a target. \
 After recon it INTELLIGENTLY selects only the agents matching the discovered surface, runs \
 them in parallel, then validates every finding by cross-model voting before reporting.\n\n\
@@ -107,9 +109,13 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let base = find_base();
 
+    // No subcommand → launch the Claude-Code-style interactive session.
     let cmd = match cli.cmd {
         Some(c) => c,
-        None => interactive(&base).await?, // no args → wizard
+        None => {
+            repl::repl(&base).await?;
+            return Ok(());
+        }
     };
 
     match cmd {
@@ -159,8 +165,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Shared engagement runner for `run` / `whitebox`.
-async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, whitebox: bool) -> anyhow::Result<RunOutput> {
+/// Shared engagement runner for `run` / `whitebox` / the interactive session.
+pub(crate) async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, whitebox: bool) -> anyhow::Result<RunOutput> {
     let lib = agents::load(base);
 
     // Unique, sortable run id → runs/<id>/
@@ -171,7 +177,7 @@ async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, whitebox: bo
     cfg.rl_path = Some(base.join("data").join("rl_state_rs.json").display().to_string());
     write_status(&workdir, "running", &format!("\"target\":{:?}", cfg.target));
 
-    println!("  ┌─ NeuroSploit v3.4.1  ·  by Joas A Santos & Red Team Leaders");
+    println!("  ┌─ NeuroSploit v3.5.0  ·  by Joas A Santos & Red Team Leaders");
     println!("  │  run id : {run_id}");
     println!("  │  target : {}", cfg.target);
     println!("  │  models : {}", cfg.models.join(", "));
@@ -235,7 +241,7 @@ async fn run_engagement(base: &Path, mut cfg: RunConfig, mcp: bool, whitebox: bo
     Ok(out)
 }
 
-fn print_findings(out: &RunOutput) {
+pub(crate) fn print_findings(out: &RunOutput) {
     println!("\n=== {} validated finding(s) ===", out.findings.len());
     println!("{}", serde_json::to_string_pretty(&out.findings).unwrap_or_default());
     if !out.artifacts.is_empty() {
@@ -262,46 +268,3 @@ fn write_status(workdir: &Path, state: &str, extra: &str) {
         if extra.is_empty() { String::new() } else { format!(",{extra}") }));
 }
 
-fn prompt(q: &str, default: &str) -> String {
-    use std::io::Write;
-    print!("  {q}{}: ", if default.is_empty() { String::new() } else { format!(" [{default}]") });
-    std::io::stdout().flush().ok();
-    let mut s = String::new();
-    std::io::stdin().read_line(&mut s).ok();
-    let s = s.trim().to_string();
-    if s.is_empty() { default.to_string() } else { s }
-}
-
-/// Interactive wizard launched when `neurosploit` is run with no subcommand.
-async fn interactive(base: &Path) -> anyhow::Result<Cmd> {
-    let lib = agents::load(base);
-    let backends = harness::installed_cli_backends();
-    println!("\n  ┌────────────────────────────────────────────┐");
-    println!("  │  NeuroSploit v3.4.1 — interactive            │");
-    println!("  │  by Joas A Santos & Red Team Leaders         │");
-    println!("  └────────────────────────────────────────────┘");
-    println!("  agents: {} · detected CLI logins: {}\n",
-        lib.total(), if backends.is_empty() { "none".into() } else { backends.join(", ") });
-
-    let mode = prompt("Mode — (b)lack-box URL or (w)hite-box repo?", "b").to_lowercase();
-    let whitebox = mode.starts_with('w');
-    let target = if whitebox {
-        prompt("Repository path", "/tmp/DVWA")
-    } else {
-        prompt("Target URL", "http://testphp.vulnweb.com/")
-    };
-    let model = prompt("Model (provider:model)", "anthropic:claude-opus-4-8");
-    let sub = prompt("Use subscription login (no API key)? (y/n)", "y").to_lowercase().starts_with('y');
-    let mcp = if whitebox { false } else {
-        prompt("Use Playwright MCP browser if available? (y/n)", "y").to_lowercase().starts_with('y')
-    };
-    let max_agents: usize = prompt("Max agents (0 = all matching)", "5").parse().unwrap_or(5);
-    let vote_n: usize = prompt("Validator votes (N)", "3").parse().unwrap_or(3);
-
-    let models = vec![model];
-    Ok(if whitebox {
-        Cmd::Whitebox { path: target, models, max_agents, vote_n, offline: false, subscription: sub, verbose: true }
-    } else {
-        Cmd::Run { url: target, models, max_agents, vote_n, offline: false, subscription: sub, mcp, verbose: true }
-    })
-}

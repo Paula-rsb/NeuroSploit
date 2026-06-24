@@ -22,6 +22,22 @@ pub struct RunOutput {
 
 const RECON_SYS: &str = "You are a web recon specialist on an AUTHORIZED engagement. You have shell tools (curl etc.) — actively fetch the target, enumerate pages/params, and map the real attack surface. Do not ask for permission; proceed. Reply with a compact JSON object (tech, endpoints, params, auth, apis). No prose.";
 
+/// Operator directives (focus instructions + auth material) prepended to
+/// recon/exploit prompts so the engagement is steered as the user asked.
+fn operator_directives(cfg: &RunConfig) -> String {
+    let mut s = String::new();
+    if let Some(focus) = cfg.instructions.as_deref().filter(|x| !x.trim().is_empty()) {
+        s.push_str(&format!("OPERATOR FOCUS — prioritise this: {focus}\n"));
+    }
+    if let Some(auth) = cfg.auth.as_deref().filter(|x| !x.trim().is_empty()) {
+        s.push_str(&format!("AUTHENTICATION — test as an authenticated user; send this with each request: {auth}\n"));
+    }
+    if !s.is_empty() {
+        s.push('\n');
+    }
+    s
+}
+
 /// Tool-usage doctrine prepended to recon/exploit prompts so the agent knows
 /// exactly what it may use. Best run on Kali Linux (or the Kali Docker image),
 /// where these tools are preinstalled.
@@ -68,7 +84,7 @@ pub async fn run(cfg: RunConfig, lib: &Library, pool: &ModelPool, tx: Sender<Str
         let _ = tx.send("recon: offline mode — skipping model calls".into()).await;
         "{}".to_string()
     } else {
-        let recon_user = format!("{}Target: {}", tool_doctrine(pool.mcp_config.is_some()), cfg.target);
+        let recon_user = format!("{}{}Target: {}", operator_directives(&cfg), tool_doctrine(pool.mcp_config.is_some()), cfg.target);
         match pool.complete_routed(Task::Recon, RECON_SYS, &recon_user).await {
             Ok((m, t)) => {
                 let _ = tx.send(format!("recon complete via {}", m.label())).await;
@@ -101,19 +117,20 @@ pub async fn run(cfg: RunConfig, lib: &Library, pool: &ModelPool, tx: Sender<Str
 
     // Use the model to pick the agents whose preconditions match the recon —
     // the harness reasons about *which* specialists to run, not all of them.
-    let chosen = select_agents(pool, &recon, &ranked, &tx).await;
+    let focus = cfg.instructions.clone().unwrap_or_default();
+    let chosen = select_agents(pool, &recon, &focus, &ranked, &tx).await;
     let selected: Vec<Agent> = if !chosen.is_empty() {
         let sel: Vec<Agent> =
             ranked.iter().filter(|a| chosen.iter().any(|c| c == &a.name)).cloned().collect();
         if sel.is_empty() {
-            heuristic_select(&ranked, &recon, cap)
+            heuristic_select(&ranked, &recon, &focus, cap)
         } else {
             sel.into_iter().take(cap).collect()
         }
     } else {
-        // LLM selection failed/empty → recon-keyword heuristic, not a blind flat list.
+        // LLM selection failed/empty → recon+focus keyword heuristic, not a blind flat list.
         let _ = tx.send("selection empty — using recon-keyword heuristic".into()).await;
-        heuristic_select(&ranked, &recon, cap)
+        heuristic_select(&ranked, &recon, &focus, cap)
     };
     // Dedup: never run the same agent twice in one engagement.
     let selected: Vec<Agent> = {
@@ -129,12 +146,14 @@ pub async fn run(cfg: RunConfig, lib: &Library, pool: &ModelPool, tx: Sender<Str
     let target = cfg.target.clone();
     let verbose = cfg.verbose;
     let mcp_on = pool.mcp_config.is_some();
+    let directives = operator_directives(&cfg);
     // Token economy: each agent gets a capped recon context, not the full blob.
     let recon_ctx: String = recon.chars().take(3500).collect();
     let raw: Vec<(String, String, Vec<Finding>)> = stream::iter(selected.iter().cloned())
         .map(|ag| {
             let target = target.clone();
             let recon = recon_ctx.clone();
+            let directives = directives.clone();
             let txc = tx.clone();
             async move {
                 if verbose {
@@ -143,10 +162,11 @@ pub async fn run(cfg: RunConfig, lib: &Library, pool: &ModelPool, tx: Sender<Str
                 let user = format!(
                     "AUTHORIZED engagement — you have explicit permission to test {target}. \
                      Do not ask for confirmation — proceed and PROVE each issue.\n\n\
-                     {react}{doctrine}{body}\n\nWhen done, reply with ONLY a JSON array of confirmed findings (may be empty []). \
+                     {directives}{react}{doctrine}{body}\n\nWhen done, reply with ONLY a JSON array of confirmed findings (may be empty []). \
                      Each item: {{id,title,severity,cwe,endpoint,payload,evidence,impact,remediation,confidence}}. \
                      `evidence` must contain the concrete proof (request/response excerpt).",
                     target = target,
+                    directives = directives,
                     react = REACT_DOCTRINE,
                     doctrine = tool_doctrine(mcp_on),
                     body = ag.user.replace("{target}", &target).replace("{recon_json}", &recon),
@@ -243,7 +263,7 @@ const SELECT_SYS: &str = "You are a penetration-test orchestrator. Given recon o
 
 /// Ask the model which agents to run for this recon. Returns chosen agent names
 /// (empty on failure → caller falls back to RL-ranked agents).
-async fn select_agents(pool: &ModelPool, recon: &str, catalog: &[Agent], tx: &Sender<String>) -> Vec<String> {
+async fn select_agents(pool: &ModelPool, recon: &str, focus: &str, catalog: &[Agent], tx: &Sender<String>) -> Vec<String> {
     let list = catalog
         .iter()
         .map(|a| format!("{} — {} [{}]", a.name, a.title.replace(" Agent", ""), a.cwe))
@@ -251,7 +271,12 @@ async fn select_agents(pool: &ModelPool, recon: &str, catalog: &[Agent], tx: &Se
         .join("\n");
     // Token economy: cap the recon blob fed to the selector.
     let recon_trim: String = recon.chars().take(3000).collect();
-    let user = format!("RECON:\n{recon_trim}\n\nAGENT CATALOG (name — title [cwe]):\n{list}\n\nReturn a JSON array of agent names to run.");
+    let focus_line = if focus.trim().is_empty() {
+        String::new()
+    } else {
+        format!("OPERATOR FOCUS (strongly prioritise agents for this): {focus}\n\n")
+    };
+    let user = format!("{focus_line}RECON:\n{recon_trim}\n\nAGENT CATALOG (name — title [cwe]):\n{list}\n\nReturn a JSON array of agent names to run.");
     match pool.complete_routed(Task::Select, SELECT_SYS, &user).await {
         Ok((m, text)) => {
             let names = parse_string_array(&text);
@@ -280,7 +305,7 @@ fn parse_string_array(text: &str) -> Vec<String> {
 /// Fallback agent selection when the LLM selector fails: score each agent by
 /// keyword overlap between its name/title and the recon text, always seed a
 /// black-box baseline of high-yield web classes, and take the top `cap`.
-fn heuristic_select(ranked: &[Agent], recon: &str, cap: usize) -> Vec<Agent> {
+fn heuristic_select(ranked: &[Agent], recon: &str, focus: &str, cap: usize) -> Vec<Agent> {
     const BASELINE: &[&str] = &[
         "sqli_error", "sqli_blind", "sqli_union", "xss_reflected", "xss_stored", "xss_dom",
         "command_injection", "lfi", "path_traversal", "ssrf", "idor", "open_redirect",
@@ -288,6 +313,7 @@ fn heuristic_select(ranked: &[Agent], recon: &str, cap: usize) -> Vec<Agent> {
         "security_headers", "cors_misconfig",
     ];
     let r = recon.to_lowercase();
+    let f = focus.to_lowercase();
     // Recon signal → agent-name substrings. Only agents whose surface the recon
     // actually identified get the signal boost; the rest rely on the baseline.
     let signals: &[(&str, &[&str])] = &[
@@ -333,6 +359,18 @@ fn heuristic_select(ranked: &[Agent], recon: &str, cap: usize) -> Vec<Agent> {
             for tok in a.name.split('_') {
                 if tok.len() >= 4 && r.contains(tok) {
                     score += 2;
+                }
+            }
+            // operator focus: strongly boost agents matching the requested classes
+            if !f.is_empty() {
+                let blob = format!("{} {}", a.name, a.title).to_lowercase();
+                let hit = ["inject", "sqli", "xss", "ssrf", "ssti", "rce", "command", "lfi", "rfi",
+                           "idor", "bola", "bfla", "access", "auth", "privilege", "csrf", "redirect",
+                           "deserial", "xxe", "traversal", "upload", "jwt", "secret", "crypto"]
+                    .iter()
+                    .any(|kw| f.contains(kw) && blob.contains(kw));
+                if hit {
+                    score += 10;
                 }
             }
             (score, a)

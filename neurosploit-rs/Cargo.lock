@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "neurosploit"
-version = "3.4.1"
+version = "3.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "neurosploit-harness"
-version = "3.4.1"
+version = "3.5.0"
 dependencies = [
  "anyhow",
  "futures",
