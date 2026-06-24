@@ -1,253 +1,142 @@
-# NeuroSploit v3.4.0
+# NeuroSploit v3.4.1 🦀
 
-![NeuroSploit](https://img.shields.io/badge/NeuroSploit-Autonomous%20AI%20Pentest-blueviolet)
-![Version](https://img.shields.io/badge/Version-3.4.0-blue)
+![Version](https://img.shields.io/badge/Version-3.4.1-blue)
+![Harness](https://img.shields.io/badge/Harness-Rust%20%7C%20tokio-e6b673)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Harness](https://img.shields.io/badge/Harness-Rust%20%7C%20tokio%20%7C%20axum-e6b673)
 ![Agents](https://img.shields.io/badge/MD%20Agents-249-red)
-![Models](https://img.shields.io/badge/Models-12%20providers%20%2F%2040%2B-success)
-![Backends](https://img.shields.io/badge/Subscription-Claude%20%7C%20Codex%20%7C%20Grok%20%7C%20Gemini-informational)
-![MCP](https://img.shields.io/badge/MCP-Playwright-orange)
+![Models](https://img.shields.io/badge/Models-12%20providers-success)
 
-**Autonomous, markdown-driven AI penetration testing — now with a Rust multi-model harness.**
+**Autonomous, multi-model penetration-testing harness — Rust, CLI-only.**
 
-NeuroSploit turns a URL (or a code repository) into an autonomous security
-engagement. A high-performance **Rust harness** (`tokio` + `axum`) drives a
-**pool of LLM models** with concurrency, **provider failover**, and **N-model
-validator voting** — multiple models must independently agree a finding is real
-before it is reported. After recon, the harness **intelligently selects** which
-of the **249 markdown agents** match the target instead of running them blindly,
-learns across runs via a **reinforcement-learning** reward loop, and serves its
-own polished web dashboard.
+This branch is the **slim, Rust-only** distribution: the `neurosploit-rs/` workspace
+plus the `agents_md/` agent library. It turns a URL (black-box) or a code
+repository (white-box) into an autonomous engagement that drives a pool of LLMs
+— via **API key** or local **subscription** (Claude Code / Codex / Gemini / Grok)
+— recons the target, **intelligently selects only the agents matching the
+discovered surface**, runs them in parallel, then validates every finding by
+**cross-model voting** before reporting.
 
-> The Python engine (v3.3.0) and the original monolith live in
-> [`legacy/`](legacy/README.md); the v3.3.0 stdlib dashboard remains in `webgui/`.
-
-## 🦀 The Rust harness (`neurosploit-rs/`)
-
-```bash
-cd neurosploit-rs && cargo build --release
-
-# Web dashboard (black-box + white-box modes)
-./target/release/neurosploit serve                       # → http://127.0.0.1:8788
-
-# Black-box: recon → intelligent agent selection → parallel exploit → vote → report
-./target/release/neurosploit run https://target.example \
-    --model anthropic:claude-opus-4-8 --model openai:gpt-5.1 --vote-n 3
-
-# White-box: analyse a repository's source for vulnerabilities
-./target/release/neurosploit whitebox /path/to/repo --subscription --model anthropic:claude-opus-4-8
-
-# Subscription (no API key) + real browser proof via Playwright MCP
-./target/release/neurosploit run https://t.example --subscription --mcp --model anthropic:claude-opus-4-8
-
-# Pipeline self-test, no keys/login required
-./target/release/neurosploit run https://t.example --offline
-```
-
-**What it does**
-
-- **Two modes** — *black-box* (URL recon → exploit) and *white-box* (walk a repo,
-  run code-review/SAST agents on the source).
-- **Intelligent selection** — the model picks the agents whose preconditions match
-  the recon, then runs that subset (not top-N).
-- **Multi-model pool** — bounded concurrency, **provider failover**, and the same
-  panel forms the **N-model validator jury** that cuts false positives.
-- **Two auth paths** — **model APIs** (provider key) *or* **subscription**: drive
-  your local **Claude Code / Codex / Grok / Gemini** logins directly, no API key.
-- **12 providers / 40+ models** (Claude, GPT, Grok, **Gemini**, NVIDIA NIM,
-  DeepSeek, Mistral, Qwen, Groq, Together, OpenRouter, Ollama).
-- **RL rewards** persisted to `data/rl_state_rs.json` — validated findings reward
-  an agent, biasing the next run.
-- **Artifacts for reuse** — every run writes `runs/<target>-<ts>/`:
-  `recon.json/md`, `exploitation.md`, `findings.json/md`, `report.html`.
-- **Playwright MCP** on the subscription path for real browser-based proof.
-
-### Agent library — 249 agents
-
-| Category | Dir | Count | Purpose |
-|----------|-----|-------|---------|
-| Vulnerability specialists | `agents_md/vulns/` | 196 | Exploit a specific vuln class |
-| Recon | `agents_md/recon/` | 12 | Information gathering / attack surface |
-| Code (white-box SAST) | `agents_md/code/` | 24 | Source-code vulnerability review |
-| Meta | `agents_md/meta/` | 17 | Orchestrator, validator, scorers, reporter, RL |
+> The full project (Python engine, web GUIs, history) lives on the `main` branch.
 
 ---
 
-## Why this architecture
+## Build
 
-| Old (≤ v3.2.4) | New (v3.3.0) |
-|----------------|-------------|
-| 2,500-line Python orchestrator + hand-coded agent classes | Markdown agents + thin engine |
-| One embedded LLM loop | Pluggable agentic CLI backends (Claude/Codex/Grok) |
-| Provider SDK juggling | Backend owns the agent loop; engine just composes & collects |
-| Static agent list | RL-weighted, recon-aware agent selection |
-| Reflection-based "evidence" | Playwright MCP proof-of-execution + adversarial validation |
+```bash
+cd neurosploit-rs
+cargo build --release        # → target/release/neurosploit
+```
+
+Requires a Rust toolchain (`rustup`). **Recommended: run on Kali Linux** (or the
+Kali Docker image) so the offensive tools the agents use are already present:
+
+```bash
+docker run -it --rm kalilinux/kali-rolling
+apt update && apt install -y curl nmap ffuf nodejs npm
+# rustscan (faster port scan): cargo install rustscan   (or grab a release from GitHub)
+```
+
+The agents degrade gracefully: if `rustscan` isn't installed they use `nmap`; if
+neither, they probe with `curl`. If a Playwright MCP browser is available they use
+it for JS-heavy pages, otherwise they fall back to `curl`.
+
+---
+
+## Usage
+
+Run with **no arguments** for an interactive wizard:
+
+```bash
+./target/release/neurosploit
+```
+
+Or drive it directly:
+
+```bash
+# Black-box — subscription (no API key), Opus, browser via Playwright if present, verbose
+./target/release/neurosploit run http://testphp.vulnweb.com/ \
+    --subscription --model anthropic:claude-opus-4-8 --mcp -v
+
+# Black-box — API keys, multi-model voting panel (1st finds, others adjudicate)
+./target/release/neurosploit run http://testphp.vulnweb.com/ \
+    --model anthropic:claude-opus-4-8 --model openai:gpt-5.1 --vote-n 3
+
+# White-box — clone a vulnerable app and review its source
+git clone https://github.com/digininja/DVWA /tmp/DVWA
+./target/release/neurosploit whitebox /tmp/DVWA \
+    --subscription --model anthropic:claude-opus-4-8 -v
+
+# Offline pipeline self-test (no keys/login needed)
+./target/release/neurosploit run http://testphp.vulnweb.com/ --offline
+
+# Utilities
+./target/release/neurosploit agents     # library counts
+./target/release/neurosploit models      # providers & models
+./target/release/neurosploit --help        # full help with examples
+```
+
+### Options (`run` / `whitebox`)
+
+| Flag | Meaning |
+|------|---------|
+| `--model provider:model` | Repeatable. First = primary; the rest fail over **and** form the voting jury. |
+| `--subscription` | Use the local CLI login (Claude/Codex/Gemini/Grok) instead of an API key. |
+| `--mcp` | Enable Playwright MCP (auto-provisioned via `npx`; backends without MCP use built-in tools). |
+| `--vote-n N` | How many models must agree a finding is real (default 3 / 2 for whitebox). |
+| `--max-agents N` | Cap agents run (`0` = all matching the recon). |
+| `--offline` | Exercise the full pipeline without calling any model. |
+| `-v, --verbose` | Log each agent as it launches, recon, and votes. |
+
+### Auth
+
+- **API key** — export the provider's key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, `XAI_API_KEY`, `NVIDIA_NIM_API_KEY`, …). See `.env.example`.
+- **Subscription** — `--subscription` drives your local `claude` / `codex` /
+  `gemini` / `grok` login. No API key needed.
 
 ---
 
 ## How it works
 
 ```
-          ┌──────────────────────────────────────────────────────────────┐
-   URL ──▶ │  neurosploit (terminal)                                       │
-          │     │                                                          │
-          │     ▼                                                          │
-          │  orchestrator ── loads agents_md/ (213) ── applies RL weights  │
-          │     │                                                          │
-          │     ▼  composes ONE master prompt                              │
-          │  backend (Claude Code | Codex | Grok)  ◀── Playwright MCP      │
-          │     │  autonomously runs the pipeline below                    │
-          │     ▼                                                          │
-          │  recon → select agents → exploit → VALIDATE → filter FPs       │
-          │        → severity → impact → report → RL feedback              │
-          └──────────────────────────────────────────────────────────────┘
-                       │                          │
-                       ▼                          ▼
-              results/findings.json        data/rl_state.json (learns)
+target ─▶ recon (curl/nmap/…) ─▶ INTELLIGENT agent selection (recon-aware)
+       ─▶ parallel exploitation ─▶ cross-model validation vote
+       ─▶ severity/score ─▶ report (HTML + Typst PDF) ─▶ RL reward update
 ```
 
-The engine never fabricates findings: every candidate is independently
-re-exploited (`meta/exploit_validator`), run through an adversarial skeptic
-(`meta/false_positive_filter`), and only then scored and reported.
+Every run writes a self-contained folder `runs/ns-<ts>-<target>/`:
+
+| File | Contents |
+|------|----------|
+| `status.json` | `running` → `complete` with a summary |
+| `recon.json` / `recon.md` | mapped attack surface |
+| `exploitation.md` | raw per-agent transcript |
+| `findings.json` / `findings.md` | validated findings (reuse by other tools/AIs) |
+| `report.html`, `report.typ`, `report.pdf` | final report (PDF via the Typst engine) |
+
+A reinforcement-learning reward store (`data/rl_state_rs.json`) biases agent
+selection on future runs.
+
+## Agent library — `agents_md/` (249)
+
+| Category | Count | Purpose |
+|----------|-------|---------|
+| `vulns/` | 196 | Exploit a specific vulnerability class |
+| `recon/` | 12 | Information gathering / attack surface |
+| `code/` | 24 | White-box source-code (SAST) review |
+| `meta/` | 17 | Orchestrator, validator, scorers, reporter, RL |
+
+Each agent is a self-contained markdown playbook (`## User Prompt` methodology +
+`## System Prompt` strict anti-false-positive rules). Drop a new `.md` into the
+matching folder and the harness picks it up.
 
 ---
 
-## The agent library (`agents_md/`)
+## Safety
 
-**213 agents** — see [`agents_md/REGISTRY.md`](agents_md/REGISTRY.md).
-
-- **196 vulnerability specialists** (`agents_md/vulns/`) — each a self-contained
-  playbook with a real methodology, payloads, CWE mapping, and a strict
-  anti-false-positive `## System Prompt`. Coverage includes the classic OWASP
-  web set **plus modern classes**:
-  - **LLM/AI security** (OWASP LLM Top 10): prompt injection (direct/indirect),
-    jailbreak, system-prompt leak, insecure output handling, RAG poisoning,
-    tool-invocation/function-calling abuse, excessive agency, PII leakage…
-  - **Cloud/K8s/containers**: IMDS SSRF (AWS/GCP/Azure), kubelet/dashboard
-    exposure, container & docker-socket escape, bucket takeover, IAM privesc…
-  - **Modern API/auth**: JWT alg/kid/jwk confusion, OAuth PKCE downgrade, SAML
-    XSW, OIDC, CSWSH, refresh-token & MFA bypass, account-takeover chains…
-  - **Advanced injection**: SSTI (Jinja2/FreeMarker/Velocity/Thymeleaf), SSPP,
-    XXE OOB, YAML/pickle deserialization, JNDI, XSLT…
-  - **Protocol/cache/smuggling**: HTTP/2 & CL.TE/TE.CL desync, h2c, web cache
-    deception/poisoning, response splitting, path-confusion…
-  - **Logic/crypto/supply-chain**: dependency confusion, padding oracle, weak
-    JWT secret, price/coupon/workflow abuse, exposed `.git`/`.env`/CI secrets…
-
-- **17 meta-agents** (`agents_md/meta/`): `orchestrator`, `recon`,
-  `exploit_validator`, `false_positive_filter`, `severity_assessor`,
-  `impact_evaluator`, `reporter`, `rl_feedback`, plus migrated expert roles.
-
-Add your own by dropping a `.md` into `agents_md/vulns/` (or extend the
-data-driven builder, `scripts/build_agents.py`). It is picked up automatically.
-
----
-
-## Quickstart
-
-```bash
-# 1. Have at least one agentic CLI installed: Claude Code, Codex, or Grok CLI
-#    (Playwright MCP needs Node/npx)
-./neurosploit backends          # show what's detected
-./neurosploit agents            # {'vulns': 196, 'meta': 17, 'total': 213}
-
-# 2. Interactive: enter a URL, pick a backend + model, go
-./neurosploit
-
-# 3. Or one-shot:
-./neurosploit run https://target.example \
-    --backend claude --model claude-opus-4-8 \
-    --collaborator oob.your-collab.net
-
-# 4. Preview the composed master prompt without executing the backend:
-./neurosploit run https://target.example --dry-run
-```
-
-Outputs land in `results/<target>/findings.json` and `reports/`, and the RL
-state updates in `data/rl_state.json`.
-
-### Web dashboard
-
-A zero-dependency (Python stdlib only) dashboard — no npm, no build step:
-
-```bash
-python3 webgui/server.py        # → http://127.0.0.1:8787
-```
-
-Tabs:
-- **Run** — multi-target input, backend + provider + model pickers (40 models
-  across CLI and API providers), verbosity, RL/MCP toggles, a live execution
-  console (shows the exact backend command and per-task activity), and findings
-  with screenshots.
-- **Agents** — browse all 213 agents and **add new `.md` agents** from the UI;
-  the main orchestrator picks them up on the next run.
-- **Insights** — interactive chart of RL agent weights + findings by severity.
-- **Reports** — download/preview the **PDF + HTML** reports (Typst engine).
-- **Settings · API** — execution mode (CLI vs API), per-provider API keys,
-  orchestrator selection, default verbosity.
-
-It calls `neurosploit_agent` directly. The previous React app and FastAPI backend
-were retired to `legacy/` (`frontend_react/`, `backend_fastapi/`).
-
-### Backends
-
-| Backend | Binary | Autonomy flag | Subscription |
-|---------|--------|---------------|--------------|
-| Claude Code | `claude` | `--dangerously-skip-permissions` | ✅ via Claude login |
-| Codex CLI | `codex` | `--dangerously-bypass-approvals-and-sandbox` | — |
-| Grok CLI | `grok` | `--yolo` | — |
-
-The engine auto-detects installed backends and only offers those. In the
-interactive flow, answering **yes** to "Use Claude subscription" runs Claude Code
-against your logged-in subscription instead of an API key.
-
-### Models
-
-Latest models per provider live in `neurosploit_agent/models.py`, including the
-**NVIDIA NIM** provider (PR #28, OpenAI-compatible at
-`https://integrate.api.nvidia.com/v1`, `nvapi-` keys), Anthropic Claude 4.x,
-OpenAI, xAI Grok, Gemini, OpenRouter, and local Ollama.
-
----
-
-## Reinforcement learning
-
-Every run produces per-agent reward signals (`meta/rl_feedback` +
-`neurosploit_agent/rl.py`): validated findings reward an agent (weighted by
-severity), rejected false positives penalize it, correct skips stay neutral.
-Weights are bounded `[0.05, 1.0]` and carry per-tech-stack affinity, so the
-engine learns, e.g., to prioritize `ssti_jinja2` on Flask targets. State is
-explainable and persisted to `data/rl_state.json`.
-
----
-
-## Safety & authorization
-
-NeuroSploit is for **authorized** security testing only. Every agent's system
-prompt enforces scope and proof-of-exploitation; DoS-class agents refuse to
-flood and require explicit rules-of-engagement. You are responsible for having
-written permission for any target you point it at.
-
----
-
-## Repository layout
-
-```
-neurosploit                 # launcher (./neurosploit)
-neurosploit_agent/          # the v3.3.0 engine
-  cli.py  orchestrator.py  agent_loader.py  backends.py  rl.py  mcp.py  models.py  config.py
-agents_md/
-  vulns/   (196)            # vulnerability specialist agents
-  meta/    (17)             # orchestrator, recon, validator, scorers, reporter, RL, roles
-  REGISTRY.md               # generated index
-scripts/build_agents.py     # data-driven agent builder
-legacy/                     # retired pre-v3.3.0 Python orchestration
-```
-
-See [`RELEASE.md`](RELEASE.md) for the full v3.3.0 changelog.
-
----
+For **authorized** testing only. Agents are instructed to stay in scope, never run
+destructive/DoS actions, and require proof-of-exploitation. You are responsible for
+having permission for any target.
 
 ## License
 
