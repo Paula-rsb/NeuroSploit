@@ -1,3 +1,90 @@
+# NeuroSploit v3.5.1 — Release Notes
+
+**Release Date:** June 2026
+**Codename:** Interactive POMDP Harness
+**License:** MIT
+**Credits:** Joas A Santos & Red Team Leaders
+
+---
+
+## TL;DR
+
+The 3.5.x line turns the Rust harness into a full **interactive REPL** (Claude
+Code / Codex / Cursor-CLI style) on top of the multi-model engine: pick models
+with arrow-keys, configure API keys per provider, set target/repo/auth/creds and
+free-text instructions that steer the agents, then `/run` engagements **in the
+background** while you keep typing. v3.5.1 adds a **POMDP belief spine** with
+anti-hallucination grounding ("no claim without a tool receipt"), **infra/host**
+testing (IP + SSH + Windows/AD) with Linux/Windows/AD agents, **attack-chain
+agents**, a **Mission-Control TUI**, structured **Typst** reports, and resilient
+run control (live checkpointing, pause-on-quota, instant stop).
+
+## Highlights
+
+- **Interactive REPL** (`neurosploit` with no subcommand): real line editing
+  (history ↑/↓, Ctrl-A/E/K, multiline), Tab-completion of `/commands` and
+  `@filesystem-paths` (Claude-Code-style file menu), arrow-key model multi-select,
+  per-provider API-key config, and a live context bar (`model · cwd · mode▸target`).
+- **Engagement modes**: **black-box** (`run`), **white-box** SAST (`whitebox`,
+  set `/repo`), **grey-box** (`greybox`, `/repo` + `/target`), **host/infra**
+  (`/target <ip>` + `/creds` for SSH / Windows / AD), plus the **TUI** dashboard.
+- **POMDP belief state** (`belief.rs`, `pomdp.rs`): a property-graph with
+  probabilities + Bayesian update + Shannon-entropy uncertainty, a
+  value-of-information planner, and a **grounding gate** (`grounding.rs`,
+  `may_assert`) — findings must carry an empirical/symbolic **tool receipt**.
+- **Infra / credentials** (`creds.rs`): multi-block YAML (jwt/header/cookie,
+  HTTP login, SSH, Windows/AD); real automated login; Linux/Windows/AD agents.
+- **Attack-chain agents**: sqli→rce→lpe, ssrf→aws, upload→lfi→rce, and more —
+  injected as chain recipes during exploitation.
+- **App-stack & CVE hunting**: IIS/.NET (tilde shortname, WebDAV, ViewState),
+  CMS (WordPress/Joomla/Drupal), app-server consoles, known-CVE exploitation.
+- **13 providers** incl. **LiteLLM** proxy and Gemini/xAI alongside the existing
+  OpenAI-compatible set; **subscription mode** drives local agentic CLIs
+  (claude/codex/gemini/grok) via stream-json.
+- **Mission-Control TUI** (`ratatui`): concurrent activity/findings/targets panels
+  with a non-blocking composer active during the run.
+- **Structured Typst report**: executive summary, vulnerability-summary table,
+  and per-finding sections (criticality, CVSS, OWASP/CWE, PoC, evidence,
+  remediation) + an attack-graph / kill-chain mapping (OWASP/CWE/MITRE).
+- **Per-project persistence** (`.neurosploit/`, no database): `session.json`,
+  `runs.json`, `history.txt` — resumes automatically on reopen.
+
+## Run control (new in 3.5.1)
+
+- **Background `/run`** with a live progress bar, severity-colored findings, and
+  the full `file://` report URL on completion/stop.
+- **3-way `/stop`**: **[1]** validate findings so far → report · **[2]** raw
+  report **now** without validating · **[3]** discard. Raw/discard abort
+  in-flight agents immediately (running CLI children are killed via
+  `kill_on_drop`); validate soft-stops so the validator still runs.
+- **Crash/quit recovery**: every finding is checkpointed live to
+  `.neurosploit/active_run.json`; an interrupted run is recovered into `/runs`
+  on the next launch, so `/results`, `/finding` and `/report` keep working.
+- **Pause-on-exhaustion**: when all models are rate-limited / out of quota the
+  run **parks** (state kept) and prints `⏸ token/quota exhausted … PAUSED`.
+  Resume with **`/continue`** when your quota renews, or switch with
+  **`/model <provider:model>`** (or the `/model` selector) then **`/continue`**.
+- **Inspection**: `/results` (live findings), `/finding` (pick one → full
+  command + PoC + evidence), `/expand` / Ctrl-O (full untruncated commands),
+  `/status`, `/diff`, `/retest`.
+
+## Usage
+
+```bash
+cd neurosploit-rs && cargo build --release
+./target/release/neurosploit                              # interactive REPL
+./target/release/neurosploit run http://target -v --model anthropic:claude-opus-4-8
+./target/release/neurosploit whitebox --repo /path/to/code   # white-box SAST
+./target/release/neurosploit greybox  --repo /path --target http://target  # grey-box
+./target/release/neurosploit run <ip> --creds creds.yaml     # host / infra
+./target/release/neurosploit tui http://target --subscription --mcp
+```
+
+Cross-platform install (Linux / macOS / Windows, x64 + arm64) via `setup.sh` and
+`install.ps1`. See **README.md** and **TUTORIAL.md** for the full walkthrough.
+
+---
+
 # NeuroSploit v3.4.0 — Release Notes
 
 **Release Date:** June 2026
