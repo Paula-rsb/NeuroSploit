@@ -49,6 +49,12 @@ pub fn providers() -> Vec<Provider> {
             models: vec!["gpt-4o", "claude-3-7-sonnet", "gemini/gemini-2.5-pro"] },
         Provider { key: "openrouter", label: "OpenRouter", base_url: "https://openrouter.ai/api/v1", env_key: "OPENROUTER_API_KEY", kind: "api",
             models: vec!["anthropic/claude-opus-4-8", "qwen/qwen-2.5-coder-32b-instruct", "deepseek/deepseek-r1", "meta-llama/llama-3.3-70b-instruct"] },
+        // Azure OpenAI (OpenAI-compatible). Set AZURE_OPENAI_ENDPOINT (e.g.
+        // https://<resource>.openai.azure.com), optionally AZURE_OPENAI_API_VERSION
+        // (default 2024-10-21), and use `azure:<your-deployment-name>` as the model.
+        // base_url is resolved from the endpoint at call time; auth uses an api-key header.
+        Provider { key: "azure", label: "Azure OpenAI", base_url: "", env_key: "AZURE_OPENAI_API_KEY", kind: "api",
+            models: vec!["gpt-4o", "gpt-4o-mini", "gpt-5.1", "o4-mini"] },
         Provider { key: "ollama", label: "Ollama (local)", base_url: "http://localhost:11434/v1", env_key: "OLLAMA_API_KEY", kind: "api",
             models: vec!["qwen2.5-coder:32b", "qwq:32b", "deepseek-r1:32b", "llama3.3:70b"] },
     ]
@@ -56,6 +62,17 @@ pub fn providers() -> Vec<Provider> {
 
 pub fn provider_for(key: &str) -> Option<Provider> {
     providers().into_iter().find(|p| p.key == key)
+}
+
+/// Resolve a provider's API key from the environment, honoring common aliases.
+/// For Gemini we also accept `GOOGLE_API_KEY` (Google's standard env var name)
+/// when `GEMINI_API_KEY` is unset.
+fn resolve_key(p: &Provider) -> String {
+    let mut k = std::env::var(p.env_key).unwrap_or_default();
+    if k.is_empty() && p.key == "gemini" {
+        k = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
+    }
+    k
 }
 
 /// A `provider:model` selection.
@@ -97,17 +114,32 @@ impl ChatClient {
     pub async fn chat(&self, m: &ModelRef, system: &str, user: &str) -> Result<String> {
         let p = provider_for(&m.provider)
             .ok_or_else(|| anyhow!("unknown provider '{}'", m.provider))?;
-        let key = std::env::var(p.env_key).unwrap_or_default();
+        let key = resolve_key(&p);
         if key.is_empty() && p.key != "ollama" && p.key != "litellm" {
-            return Err(anyhow!("no API key ({}) for provider '{}'", p.env_key, p.key));
+            let hint = if p.key == "gemini" { format!("{} (or GOOGLE_API_KEY)", p.env_key) } else { p.env_key.to_string() };
+            return Err(anyhow!("no API key ({}) for provider '{}'", hint, p.key));
         }
-        // Allow an env base-URL override (LiteLLM gateway, self-hosted proxies, …).
-        let base = match p.key {
-            "litellm" => std::env::var("LITELLM_BASE_URL").unwrap_or_else(|_| p.base_url.to_string()),
-            "ollama" => std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| p.base_url.to_string()),
-            _ => p.base_url.to_string(),
+        // Azure OpenAI uses a per-resource endpoint + deployment + api-version,
+        // and authenticates with an `api-key` header instead of Bearer.
+        let azure = p.key == "azure";
+        let url = if azure {
+            let endpoint = std::env::var("AZURE_OPENAI_ENDPOINT").unwrap_or_default();
+            if endpoint.is_empty() {
+                return Err(anyhow!("set AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com) for the azure provider"));
+            }
+            let ver = std::env::var("AZURE_OPENAI_API_VERSION").unwrap_or_else(|_| "2024-10-21".to_string());
+            // `model` is the Azure DEPLOYMENT name (use `azure:<deployment>`).
+            format!("{}/openai/deployments/{}/chat/completions?api-version={}",
+                endpoint.trim_end_matches('/'), m.model, ver)
+        } else {
+            // Allow an env base-URL override (LiteLLM gateway, self-hosted proxies, …).
+            let base = match p.key {
+                "litellm" => std::env::var("LITELLM_BASE_URL").unwrap_or_else(|_| p.base_url.to_string()),
+                "ollama" => std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| p.base_url.to_string()),
+                _ => p.base_url.to_string(),
+            };
+            format!("{}/chat/completions", base.trim_end_matches('/'))
         };
-        let url = format!("{}/chat/completions", base.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": m.model,
             "max_tokens": 4096,
@@ -119,7 +151,7 @@ impl ChatClient {
         });
         let mut req = self.http.post(&url).json(&body);
         if !key.is_empty() {
-            req = req.bearer_auth(&key);
+            if azure { req = req.header("api-key", &key); } else { req = req.bearer_auth(&key); }
         }
         let resp = req.send().await?;
         let status = resp.status();

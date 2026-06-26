@@ -55,6 +55,15 @@ and severity-calibrated).
   neurosploit whitebox https://github.com/digininja/DVWA \
     --subscription --model anthropic:claude-opus-4-8 -v
   ```
+- **Azure OpenAI provider** (resolves #21). OpenAI-compatible: set
+  `AZURE_OPENAI_ENDPOINT` (+ optional `AZURE_OPENAI_API_VERSION`, default
+  `2024-10-21`) and `AZURE_OPENAI_API_KEY`, then `--model azure:<deployment>`
+  (the model name is your Azure *deployment* name; auth via the `api-key`
+  header).
+- **`GOOGLE_API_KEY` alias for Gemini** (resolves #25 confusion). Gemini's API
+  path reads `GEMINI_API_KEY`, and now also accepts `GOOGLE_API_KEY` (Google's
+  standard env var) when the former is unset. Local providers (ollama/litellm)
+  still need **no** key at all.
 
 ## Notes
 
