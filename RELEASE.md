@@ -47,6 +47,14 @@ and severity-calibrated).
 - **5 new doctrine meta-agents** (`agents_md/meta/`): `exploit_depth_doctrine`,
   `finding_chainer`, `artifact_decoder`, `token_auditor`, `report_calibrator`
   (meta agents 17 → 22; total library 343 → 348).
+- **Source from a GitHub URL.** `whitebox` / `greybox --repo` (and the REPL
+  `/repo`) now accept a **git URL** (`https://github.com/owner/repo[.git]`) or an
+  `owner/repo` shorthand — the repo is cloned (shallow) into `<base>/repos/` and
+  reviewed automatically, no manual `git clone` needed:
+  ```bash
+  neurosploit whitebox https://github.com/digininja/DVWA \
+    --subscription --model anthropic:claude-opus-4-8 -v
+  ```
 
 ## Notes
 

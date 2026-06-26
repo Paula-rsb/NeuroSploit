@@ -104,3 +104,7 @@ data/repl_runs.json
 data/repl_history.txt
 .neurosploit/
 /tmp/*
+
+# Cloned source repos (whitebox/greybox from a git URL)
+repos/
+neurosploit-rs/repos/

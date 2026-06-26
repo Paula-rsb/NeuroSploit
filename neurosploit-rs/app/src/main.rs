@@ -65,8 +65,10 @@ enum Cmd {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// White-box: analyse a local repository's source code for vulnerabilities.
+    /// White-box: analyse a repository's source code for vulnerabilities.
     Whitebox {
+        /// Local path, a GitHub URL (https://github.com/owner/repo[.git]) or an
+        /// `owner/repo` shorthand — git URLs are cloned automatically.
         path: String,
         #[arg(long = "model")]
         models: Vec<String>,
@@ -83,7 +85,7 @@ enum Cmd {
     },
     /// Greybox: review a repo's source AND exploit the running app together.
     Greybox {
-        /// Path to the source repository.
+        /// Source repo: local path, a GitHub URL, or `owner/repo` (cloned if a URL).
         repo: String,
         /// URL of the running application.
         #[arg(long)]
@@ -230,6 +232,7 @@ async fn main() -> anyhow::Result<()> {
             print_findings(&out);
         }
         Cmd::Whitebox { path, models, max_agents, vote_n, offline, subscription, verbose } => {
+            let path = resolve_source(&base, &path)?; // local path OR github URL/owner/repo
             let mut cfg = RunConfig::new(&path);
             cfg.max_agents = max_agents;
             cfg.vote_n = vote_n;
@@ -243,6 +246,7 @@ async fn main() -> anyhow::Result<()> {
             print_findings(&out);
         }
         Cmd::Greybox { repo, url, models, creds, focus, max_agents, vote_n, offline, subscription, mcp, verbose } => {
+            let repo = resolve_source(&base, &repo)?; // local path OR github URL/owner/repo
             let url = if url.starts_with("http") { url } else { format!("https://{url}") };
             let mut cfg = RunConfig::new(&url);
             cfg.repo = Some(repo);
@@ -260,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
             print_findings(&out);
         }
         Cmd::Tui { url, models, repo, creds, focus, max_agents, vote_n, subscription, mcp } => {
+            let repo = match repo { Some(r) => Some(resolve_source(&base, &r)?), None => None }; // github URL ok
             let url = if url.starts_with("http") { url } else { format!("https://{url}") };
             let mut cfg = RunConfig::new(&url);
             cfg.max_agents = max_agents;
@@ -530,6 +535,45 @@ fn sanitize(s: &str) -> String {
 fn now_ts() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Resolve a source argument (white-box `path` / grey-box `--repo`) to a local
+/// directory. A git URL (`https://…`, `git@…`, `ssh://…`, `*.git`) or a GitHub
+/// `owner/repo` shorthand is **cloned** (shallow) into `<base>/repos/<name>` and
+/// that path is returned; an existing local path is returned unchanged.
+pub(crate) fn resolve_source(base: &Path, arg: &str) -> anyhow::Result<String> {
+    let is_url = arg.starts_with("http://") || arg.starts_with("https://")
+        || arg.starts_with("git@") || arg.starts_with("ssh://") || arg.ends_with(".git");
+    // `owner/repo` GitHub shorthand: no scheme, exactly one slash, not a real path.
+    let is_shorthand = !is_url
+        && !Path::new(arg).exists()
+        && arg.matches('/').count() == 1
+        && !arg.starts_with('.') && !arg.starts_with('/') && !arg.starts_with('~')
+        && arg.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
+    if !is_url && !is_shorthand {
+        return Ok(arg.to_string()); // already a local path
+    }
+
+    let url = if is_shorthand { format!("https://github.com/{arg}") } else { arg.to_string() };
+    let name = sanitize(url.trim_end_matches('/').trim_end_matches(".git").rsplit('/').next().unwrap_or("repo"));
+    let repos_dir = base.join("repos");
+    std::fs::create_dir_all(&repos_dir).ok();
+    let dest = repos_dir.join(&name);
+
+    if dest.join(".git").is_dir() {
+        println!("  [*] repo cache hit → {} (delete it to re-clone)", dest.display());
+        return Ok(dest.display().to_string());
+    }
+    println!("  [*] cloning {url} → {}", dest.display());
+    let status = std::process::Command::new("git")
+        .args(["clone", "--depth", "1", &url, &dest.display().to_string()])
+        .status()
+        .map_err(|e| anyhow::anyhow!("could not start `git clone` (is git installed?): {e}"))?;
+    if !status.success() {
+        std::fs::remove_dir_all(&dest).ok();
+        anyhow::bail!("git clone failed for {url}");
+    }
+    Ok(dest.display().to_string())
 }
 
 /// Blocking yes/no prompt (default yes). Used after a graceful Ctrl-C.

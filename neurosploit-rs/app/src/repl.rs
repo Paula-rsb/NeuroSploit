@@ -392,9 +392,15 @@ pub async fn repl(base: &Path) -> anyhow::Result<()> {
                        s.target = Some(t.clone()); println!("  target: {t}"); }
             }
             "/repo" => {
-                if arg.is_empty() { println!("  repo: {}", s.repo.clone().unwrap_or_else(|| "(none) — set with /repo <path>, clear with /repo clear".into())); }
+                if arg.is_empty() { println!("  repo: {}", s.repo.clone().unwrap_or_else(|| "(none) — set with /repo <path | github-url | owner/repo>, clear with /repo clear".into())); }
                 else if arg == "clear" { s.repo = None; println!("  repo cleared"); }
-                else { s.repo = Some(arg.to_string()); println!("  repo: {arg}"); }
+                else {
+                    // Accept a local path OR a GitHub URL / owner-repo shorthand (cloned on set).
+                    match crate::resolve_source(base, arg) {
+                        Ok(p) => { s.repo = Some(p.clone()); println!("  repo: {p}"); }
+                        Err(e) => println!("  \x1b[31mcould not resolve repo: {e}\x1b[0m"),
+                    }
+                }
             }
             "/auth" => {
                 if arg.is_empty() { println!("  auth: {}", s.auth.clone().unwrap_or_else(|| "(none) — set with /auth <header>, clear with /auth clear".into())); }
